@@ -5,9 +5,9 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "vite build",
+    "build": "npx vite build",
     "preview": "vite preview",
-    "postinstall": "npm rebuild esbuild"
+    "prepare": "npm run build"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.48.0",
