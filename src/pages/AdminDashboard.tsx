@@ -101,7 +101,7 @@ export const AdminDashboard: React.FC = () => {
 
     try {
       const fileExt = creativeFile.name.split('.').pop();
-      const fileName = `${Date.now()}-${Math.random().toString(36.substring(2, 15))}.${fileExt}`;
+      const fileName = `${Date.now()}-${Math.random().toString(36).substring(2, 15)}.${fileExt}`;
       const filePath = `${fileName}`;
 
       // Upload para o bucket 'creatives'
