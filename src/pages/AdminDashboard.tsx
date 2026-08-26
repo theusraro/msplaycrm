@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { supabase } from '../lib/supabase';
 import { Profile } from '../types';
-import { Users, Upload, UserPlus, Shield, MessageSquare, CheckCircle2, ToggleLeft, ToggleRight, Database, Settings, Key, Trash2, Image as ImageIcon, Plus } from 'lucide-react';
+import { Users, Upload, UserPlus, Shield, MessageSquare, CheckCircle2, ToggleLeft, ToggleRight, Database, Settings, Key, Trash2, Image as ImageIcon, Plus, Loader2 } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import Papa from 'papaparse';
 
@@ -16,11 +16,12 @@ export const AdminDashboard: React.FC = () => {
   const [newUserPassword, setNewUserPassword] = useState('');
   const [newUserRole, setNewUserRole] = useState<'user' | 'admin'>('user');
 
-  // Estados para criativos
+  // Estados para criativos com upload de arquivo
   const [creatives, setCreatives] = useState<any[]>([]);
   const [newCreativeTitle, setNewCreativeTitle] = useState('');
-  const [newCreativeUrl, setNewCreativeUrl] = useState('');
   const [newCreativeDesc, setNewCreativeDesc] = useState('');
+  const [creativeFile, setCreativeFile] = useState<File | null>(null);
+  const [uploadingImage, setUploadingImage] = useState(false);
 
   const [selectedReseller, setSelectedReseller] = useState<string>('all');
   const [statusMsg, setStatusMsg] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
@@ -37,7 +38,6 @@ export const AdminDashboard: React.FC = () => {
 
     setStats({ totalUsers: profilesData?.length || 0, totalContacts: contactsCount || 0, totalMessages: msgCount || 0 });
 
-    // Buscar vendas concluídas por revendedores
     const { data: salesData } = await supabase
       .from('contact_assignments')
       .select('user_id, contact_id, assigned_at, contacts (nome, telefone), profiles (nome, email)')
@@ -45,11 +45,9 @@ export const AdminDashboard: React.FC = () => {
     
     if (salesData) setCompletedSales(salesData);
 
-    // Buscar criativos cadastrados
     const { data: creativesData } = await supabase.from('creatives').select('*').order('created_at', { ascending: false });
     if (creativesData) setCreatives(creativesData);
 
-    // Buscar chaves de API
     const { data: keysData } = await supabase.from('api_settings').select('*');
     if (keysData) {
       const keysObj = { groq: '', nvidia: '', openrouter: '', gemini: '', claude: '', custom_key: '', custom_url: '', custom_model: '' };
@@ -94,16 +92,42 @@ export const AdminDashboard: React.FC = () => {
     fetchData();
   };
 
+  // Upload de PNG direto para o Supabase Storage
   const handleAddCreative = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!creativeFile) return setStatusMsg({ type: 'error', text: 'Selecione um arquivo PNG ou imagem.' });
     setStatusMsg(null);
-    const { error } = await supabase.from('creatives').insert({ titulo: newCreativeTitle, imagem_url: newCreativeUrl, descricao: newCreativeDesc });
-    if (error) {
-      setStatusMsg({ type: 'error', text: `Erro ao cadastrar criativo: ${error.message}` });
-    } else {
-      setStatusMsg({ type: 'success', text: 'Criativo cadastrado com sucesso!' });
-      setNewCreativeTitle(''); setNewCreativeUrl(''); setNewCreativeDesc('');
+    setUploadingImage(true);
+
+    try {
+      const fileExt = creativeFile.name.split('.').pop();
+      const fileName = `${Date.now()}-${Math.random().toString(36.substring(2, 15))}.${fileExt}`;
+      const filePath = `${fileName}`;
+
+      // Upload para o bucket 'creatives'
+      const { error: uploadError } = await supabase.storage.from('creatives').upload(filePath, creativeFile);
+      if (uploadError) throw uploadError;
+
+      // Pegar URL pública da imagem
+      const { data: publicUrlData } = supabase.storage.from('creatives').getPublicUrl(filePath);
+      const publicUrl = publicUrlData.publicUrl;
+
+      // Salvar registro no banco
+      const { error: dbError } = await supabase.from('creatives').insert({
+        titulo: newCreativeTitle,
+        imagem_url: publicUrl,
+        descricao: newCreativeDesc
+      });
+
+      if (dbError) throw dbError;
+
+      setStatusMsg({ type: 'success', text: 'Criativo e imagem PNG enviados com sucesso!' });
+      setNewCreativeTitle(''); setNewCreativeDesc(''); setCreativeFile(null);
       fetchData();
+    } catch (err: any) {
+      setStatusMsg({ type: 'error', text: `Erro ao enviar imagem: ${err.message}` });
+    } finally {
+      setUploadingImage(false);
     }
   };
 
@@ -214,7 +238,7 @@ export const AdminDashboard: React.FC = () => {
         </div>
       )}
 
-      {/* ABA: VISÃO GERAL & VENDAS DOS REVENDEDORES */}
+      {/* ABA: VISÃO GERAL & VENDAS */}
       {activeTab === 'overview' && (
         <div className="space-y-6">
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
@@ -232,7 +256,6 @@ export const AdminDashboard: React.FC = () => {
             </div>
           </div>
 
-          {/* Tabela de Auditoria de Vendas Concluídas */}
           <div className="border border-brand-lightBorder dark:border-brand-darkBorder bg-white dark:bg-brand-darkCard p-6 rounded-2xl shadow-sm">
             <h2 className="text-base font-bold text-slate-900 dark:text-white mb-4 flex items-center gap-2"><CheckCircle2 className="w-5 h-5 text-emerald-500" /> Auditoria de Vendas Concluídas por Revendedor</h2>
             <div className="overflow-x-auto">
@@ -329,16 +352,30 @@ export const AdminDashboard: React.FC = () => {
         </div>
       )}
 
-      {/* ABA: CRIATIVOS & POSTS (CADASTRO DE IMAGENS) */}
+      {/* ABA: CRIATIVOS & POSTS (SELEÇÃO DE ARQUIVO PNG) */}
       {activeTab === 'creatives' && (
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
           <div className="border border-brand-lightBorder dark:border-brand-darkBorder bg-white dark:bg-brand-darkCard p-6 rounded-2xl h-fit shadow-sm">
-            <h2 className="text-base font-bold text-brand-red mb-4 flex gap-2"><Plus className="w-4 h-4" />Cadastrar Novo Criativo</h2>
+            <h2 className="text-base font-bold text-brand-red mb-4 flex gap-2"><Plus className="w-4 h-4" />Enviar Criativo (PNG/Imagem)</h2>
             <form onSubmit={handleAddCreative} className="space-y-3.5 text-xs">
-              <input type="text" required value={newCreativeTitle} onChange={(e) => setNewCreativeTitle(e.target.value)} placeholder="Título (Ex: Banner Planos MSPLAY)" className="w-full p-2.5 rounded-xl border border-brand-lightBorder dark:border-brand-darkBorder bg-slate-50 dark:bg-brand-dark" />
-              <input type="url" required value={newCreativeUrl} onChange={(e) => setNewCreativeUrl(e.target.value)} placeholder="URL Direta da Imagem (https://...)" className="w-full p-2.5 rounded-xl border border-brand-lightBorder dark:border-brand-darkBorder bg-slate-50 dark:bg-brand-dark" />
-              <textarea value={newCreativeDesc} onChange={(e) => setNewCreativeDesc(e.target.value)} placeholder="Breve descrição ou dica de legenda" rows={3} className="w-full p-2.5 rounded-xl border border-brand-lightBorder dark:border-brand-darkBorder bg-slate-50 dark:bg-brand-dark" />
-              <button type="submit" className="w-full bg-brand-red hover:bg-brand-redHover text-white py-2.5 rounded-xl font-bold">Salvar Criativo</button>
+              <div>
+                <label className="block font-bold mb-1">Título do Criativo</label>
+                <input type="text" required value={newCreativeTitle} onChange={(e) => setNewCreativeTitle(e.target.value)} placeholder="Ex: Banner Divulgação WhatsApp" className="w-full p-2.5 rounded-xl border border-brand-lightBorder dark:border-brand-darkBorder bg-slate-50 dark:bg-brand-dark" />
+              </div>
+
+              <div>
+                <label className="block font-bold mb-1">Selecionar Imagem (PNG / JPG)</label>
+                <input type="file" accept="image/png, image/jpeg, image/webp" required onChange={(e) => setCreativeFile(e.target.files?.[0] || null)} className="w-full p-2 text-xs rounded-xl border border-brand-lightBorder dark:border-brand-darkBorder bg-slate-50 dark:bg-brand-dark file:mr-4 file:py-1 file:px-3 file:rounded-lg file:border-0 file:text-xs file:font-semibold file:bg-brand-red file:text-white hover:file:bg-brand-redHover cursor-pointer" />
+              </div>
+
+              <div>
+                <label className="block font-bold mb-1">Descrição / Legenda Opcional</label>
+                <textarea value={newCreativeDesc} onChange={(e) => setNewCreativeDesc(e.target.value)} placeholder="Dicas para o revendedor..." rows={3} className="w-full p-2.5 rounded-xl border border-brand-lightBorder dark:border-brand-darkBorder bg-slate-50 dark:bg-brand-dark" />
+              </div>
+
+              <button type="submit" disabled={uploadingImage} className="w-full bg-brand-red hover:bg-brand-redHover text-white py-2.5 rounded-xl font-bold flex justify-center items-center gap-2 disabled:opacity-50">
+                {uploadingImage ? <><Loader2 className="w-4 h-4 animate-spin" /> Enviando Imagem...</> : 'Salvar Criativo'}
+              </button>
             </form>
           </div>
 
@@ -348,8 +385,9 @@ export const AdminDashboard: React.FC = () => {
               {creatives.map(cr => (
                 <div key={cr.id} className="border border-brand-lightBorder dark:border-brand-darkBorder rounded-xl p-3 bg-slate-50 dark:bg-brand-dark flex flex-col justify-between">
                   <div>
-                    <img src={cr.imagem_url} alt={cr.titulo} className="w-full h-32 object-cover rounded-lg mb-2" />
+                    <img src={cr.imagem_url} alt={cr.titulo} className="w-full h-36 object-cover rounded-lg mb-2" />
                     <p className="font-bold text-xs">{cr.titulo}</p>
+                    {cr.descricao && <p className="text-[11px] text-slate-500 mt-1">{cr.descricao}</p>}
                   </div>
                   <button onClick={() => handleDeleteCreative(cr.id)} className="mt-3 bg-red-100 hover:bg-red-200 text-red-600 dark:bg-red-950 dark:text-red-400 py-1.5 rounded-lg font-bold text-xs">Excluir Criativo</button>
                 </div>
