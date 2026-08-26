@@ -90,33 +90,32 @@ export const ResellerDashboard: React.FC = () => {
     setCopied(true); setTimeout(() => setCopied(false), 2000);
   };
 
-  // Ao clicar em enviar WhatsApp, move automaticamente de 'novo' para 'pendente'
   const handleOpenWhatsApp = async () => {
     if (!selectedContact || !generatedMessage) return;
     const phone = selectedContact.telefone.replace(/\D/g, '');
     
-    // Atualiza status para 'pendente' no banco
-    await supabase
-      .from('contact_assignments')
-      .update({ status: 'pendente' })
-      .eq('user_id', profile?.id)
-      .eq('contact_id', selectedContact.id);
+    // Atualiza status para 'pendente' automaticamente ao enviar
+    await updateLeadStatus(selectedContact.id, 'pendente');
 
-    fetchLeadsAndCreatives();
     window.open(`https://wa.me/${phone}?text=${encodeURIComponent(generatedMessage)}`, '_blank');
   };
 
   const updateLeadStatus = async (contactId: string, newStatus: 'novo' | 'pendente' | 'concluido') => {
-    await supabase
+    if (!profile) return;
+    const { error } = await supabase
       .from('contact_assignments')
       .update({ status: newStatus })
-      .eq('user_id', profile?.id)
+      .eq('user_id', profile.id)
       .eq('contact_id', contactId);
+
+    if (error) {
+      alert('Erro ao atualizar status: ' + error.message);
+      return;
+    }
 
     fetchLeadsAndCreatives();
   };
 
-  // Gerador dinâmico de imagem com o WhatsApp do revendedor embutido
   const generateCustomImage = (imageUrl: string, title: string) => {
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -131,7 +130,6 @@ export const ResellerDashboard: React.FC = () => {
       canvas.height = img.height || 1080;
       ctx.drawImage(img, 0, 0);
 
-      // Caixa de rodapé dinâmica com o WhatsApp do revendedor
       if (resellerPhone) {
         ctx.fillStyle = 'rgba(0, 0, 0, 0.85)';
         ctx.fillRect(0, canvas.height - 140, canvas.width, 140);
@@ -145,7 +143,6 @@ export const ResellerDashboard: React.FC = () => {
         ctx.fillText(`📞 WhatsApp: ${resellerPhone}`, 50, canvas.height - 35);
       }
 
-      // Download automático da imagem personalizada
       const link = document.createElement('a');
       link.download = `${title.replace(/\s+/g, '_')}_${resellerPhone || 'zap'}.png`;
       link.href = canvas.toDataURL('image/png');
@@ -157,13 +154,13 @@ export const ResellerDashboard: React.FC = () => {
 
   return (
     <div className="space-y-6">
-      {/* Barra de Configuração Rápida do WhatsApp do Revendedor */}
+      {/* Barra de Configuração do WhatsApp do Revendedor */}
       <div className="bg-white dark:bg-brand-darkCard border border-brand-lightBorder dark:border-brand-darkBorder p-4 rounded-2xl flex flex-col sm:flex-row items-center justify-between gap-4 shadow-sm">
         <div className="flex items-center gap-3">
           <div className="bg-emerald-500/10 p-2.5 rounded-xl text-emerald-500"><Phone className="w-5 h-5" /></div>
           <div>
             <p className="text-xs font-bold uppercase text-slate-500">Seu WhatsApp de Atendimento</p>
-            <p className="text-sm font-black text-slate-900 dark:text-white">{resellerPhone || 'Não configurado (Insira ao lado)'}</p>
+            <p className="text-sm font-black text-slate-900 dark:text-white">{resellerPhone || 'Não configurado'}</p>
           </div>
         </div>
         <div className="flex items-center gap-2 w-full sm:w-auto">
@@ -174,19 +171,19 @@ export const ResellerDashboard: React.FC = () => {
             onChange={(e) => handleSavePhone(e.target.value)} 
             className="p-2 text-xs rounded-xl border border-brand-lightBorder dark:border-brand-darkBorder bg-slate-50 dark:bg-brand-dark outline-none focus:ring-2 focus:ring-brand-red w-full sm:w-60"
           />
-          <button onClick={() => alert('Número salvo com sucesso! Ele será usado nas imagens e IA.')} className="bg-brand-red text-white px-4 py-2 rounded-xl text-xs font-bold shrink-0">Salvar</button>
+          <button onClick={() => alert('Número salvo com sucesso!')} className="bg-brand-red text-white px-4 py-2 rounded-xl text-xs font-bold shrink-0">Salvar</button>
         </div>
       </div>
 
-      {/* Abas Superiores */}
+      {/* Abas */}
       <div className="flex gap-2 border-b border-brand-lightBorder dark:border-brand-darkBorder pb-3">
         <button onClick={() => setActiveTab('leads')} className={`px-4 py-2 rounded-xl text-xs font-bold transition ${activeTab === 'leads' ? 'bg-brand-red text-white' : 'bg-slate-100 dark:bg-brand-darkCard text-slate-600 dark:text-zinc-400'}`}>Funil de Leads & IA</button>
-        <button onClick={() => setActiveTab('creatives')} className={`px-4 py-2 rounded-xl text-xs font-bold transition ${activeTab === 'creatives' ? 'bg-brand-red text-white' : 'bg-slate-100 dark:bg-brand-darkCard text-slate-600 dark:text-zinc-400'}`}>Criativos & Posts Prontos (Com seu Zap)</button>
+        <button onClick={() => setActiveTab('creatives')} className={`px-4 py-2 rounded-xl text-xs font-bold transition ${activeTab === 'creatives' ? 'bg-brand-red text-white' : 'bg-slate-100 dark:bg-brand-darkCard text-slate-600 dark:text-zinc-400'}`}>Criativos & Posts Prontos</button>
       </div>
 
       {activeTab === 'leads' ? (
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-          {/* Coluna Esquerda: Lista de Leads com Filtro de Status */}
+          {/* Lista de Leads */}
           <div className="lg:col-span-5 border border-brand-lightBorder dark:border-brand-darkBorder bg-white dark:bg-brand-darkCard rounded-2xl p-5 shadow-sm h-[calc(100vh-260px)] flex flex-col">
             <div className="flex justify-between items-center mb-3">
               <h2 className="text-sm font-bold uppercase tracking-wider">Meus Leads</h2>
@@ -209,12 +206,11 @@ export const ResellerDashboard: React.FC = () => {
                     <span className="flex gap-1.5 items-center"><User className="w-3.5 h-3.5 text-brand-red" />{c.nome}</span>
                     <span className="text-slate-400">{c.telefone}</span>
                   </div>
-                  {/* Ações rápidas de mover status */}
                   <div className="flex items-center justify-between mt-2 pt-2 border-t border-brand-lightBorder dark:border-brand-darkBorder text-[10px]">
                     <span className="text-slate-400 capitalize">Status: <b>{c.status}</b></span>
                     <div className="flex gap-1" onClick={(e) => e.stopPropagation()}>
-                      {c.status !== 'pendente' && <button onClick={() => updateLeadStatus(c.id, 'pendente')} title="Marcar Pendente" className="px-2 py-0.5 rounded bg-amber-100 text-amber-700 font-bold">Pendente</button>}
-                      {c.status !== 'concluido' && <button onClick={() => updateLeadStatus(c.id, 'concluido')} title="Marcar Concluído (Venda)" className="px-2 py-0.5 rounded bg-emerald-100 text-emerald-700 font-bold">Vendeu!</button>}
+                      {c.status !== 'pendente' && <button onClick={() => updateLeadStatus(c.id, 'pendente')} className="px-2 py-0.5 rounded bg-amber-100 text-amber-700 font-bold">Pendente</button>}
+                      {c.status !== 'concluido' && <button onClick={() => updateLeadStatus(c.id, 'concluido')} className="px-2 py-0.5 rounded bg-emerald-100 text-emerald-700 font-bold">Vendeu!</button>}
                     </div>
                   </div>
                 </div>
@@ -223,7 +219,7 @@ export const ResellerDashboard: React.FC = () => {
             </div>
           </div>
 
-          {/* Coluna Direita: IA Generator com os novos objetivos */}
+          {/* Gerador de IA */}
           <div className="lg:col-span-7 border border-brand-lightBorder dark:border-brand-darkBorder bg-white dark:bg-brand-darkCard rounded-2xl p-6 shadow-sm">
             <div className="flex justify-between border-b border-brand-lightBorder dark:border-brand-darkBorder pb-4 mb-4">
               <h2 className="text-base font-bold flex gap-2 items-center"><Sparkles className="w-5 h-5 text-brand-red" /> Gerador de Abordagem IA</h2>
@@ -251,7 +247,7 @@ export const ResellerDashboard: React.FC = () => {
                   <button key={t.id} onClick={() => setMessageType(t.id)} className={`py-2 px-3 rounded-xl font-bold border transition text-left ${messageType === t.id ? 'border-brand-red bg-brand-red text-white' : 'border-brand-lightBorder dark:border-brand-darkBorder bg-slate-50 dark:bg-brand-dark text-slate-700 dark:text-zinc-300'}`}>{t.label}</button>
                 ))}
               </div>
-              <input type="text" placeholder="Instruções extras (opcional, ex: Oferecer desconto de 10%)" value={customInstructions} onChange={(e) => setCustomInstructions(e.target.value)} className="w-full p-2.5 text-xs rounded-xl border border-brand-lightBorder dark:border-brand-darkBorder bg-slate-50 dark:bg-brand-dark outline-none focus:ring-2 focus:ring-brand-red" />
+              <input type="text" placeholder="Instruções extras (opcional)" value={customInstructions} onChange={(e) => setCustomInstructions(e.target.value)} className="w-full p-2.5 text-xs rounded-xl border border-brand-lightBorder dark:border-brand-darkBorder bg-slate-50 dark:bg-brand-dark outline-none focus:ring-2 focus:ring-brand-red" />
               <button onClick={handleGenerateMessage} disabled={loading || !selectedContact} className="w-full bg-brand-red hover:bg-brand-redHover text-white py-2.5 rounded-xl font-bold text-xs flex justify-center gap-2 disabled:opacity-50">
                 {loading ? 'Gerando mensagem...' : <><Sparkles className="w-4 h-4" /> Gerar Mensagem Pronta</>}
               </button>
@@ -266,10 +262,10 @@ export const ResellerDashboard: React.FC = () => {
           </div>
         </div>
       ) : (
-        /* ABA: CRIATIVOS COM O WHATSAPP DO REVENDEDOR EMBUTIDO */
+        /* Criativos */
         <div className="border border-brand-lightBorder dark:border-brand-darkBorder bg-white dark:bg-brand-darkCard p-6 rounded-2xl shadow-sm">
           <h2 className="text-base font-bold text-brand-red mb-2 flex items-center gap-2"><ImageIcon className="w-5 h-5" /> Galeria de Criativos de Divulgação</h2>
-          <p className="text-xs text-slate-500 mb-6">Ao clicar em baixar, o sistema substitui automaticamente o número da imagem pelo **seu WhatsApp cadastrado acima**.</p>
+          <p className="text-xs text-slate-500 mb-6">Ao clicar em baixar, o sistema substitui automaticamente o número da imagem pelo seu WhatsApp cadastrado.</p>
           
           <canvas ref={canvasRef} className="hidden" />
 
@@ -279,7 +275,7 @@ export const ResellerDashboard: React.FC = () => {
                 <div>
                   <img src={cr.imagem_url} alt={cr.titulo} className="w-full h-48 object-cover rounded-xl mb-3" />
                   <h3 className="font-bold text-sm text-slate-900 dark:text-white">{cr.titulo}</h3>
-                  <p className="text-xs text-slate-500 mt-1">{cr.descricao || 'Criativo otimizado para conversão no WhatsApp e Instagram Stories.'}</p>
+                  <p className="text-xs text-slate-500 mt-1">{cr.descricao || 'Criativo otimizado para conversão.'}</p>
                 </div>
                 <button 
                   onClick={() => {
@@ -295,7 +291,7 @@ export const ResellerDashboard: React.FC = () => {
                 </button>
               </div>
             ))}
-            {creatives.length === 0 && <p className="text-slate-400 text-xs py-10 col-span-full text-center">Nenhum criativo cadastrado pelo Admin ainda. O Administrador pode cadastrar imagens na base de dados.</p>}
+            {creatives.length === 0 && <p className="text-slate-400 text-xs py-10 col-span-full text-center">Nenhum criativo cadastrado pelo Admin ainda.</p>}
           </div>
         </div>
       )}
