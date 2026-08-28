@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 # Logs
 logs
 *.log
@@ -6,10 +7,13 @@ yarn-debug.log*
 yarn-error.log*
 pnpm-debug.log*
 lerna-debug.log*
+=======
+>>>>>>> cd6475a57766841e4910394643593e42a74146ad
 
 node_modules
 dist
 dist-ssr
+<<<<<<< HEAD
 *.local
 .env
 .env.*
@@ -27,3 +31,19 @@ server/data/*.json
 *.njsproj
 *.sln
 *.sw?
+=======
+.vercel
+
+
+.env
+.env.local
+.env.*.local
+
+
+logs
+*.log
+npm-debug.log*
+.vscode/*
+!.vscode/extensions.json
+.DS_Store
+>>>>>>> cd6475a57766841e4910394643593e42a74146ad

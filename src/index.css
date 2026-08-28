@@ -1,2 +1,14 @@
+<<<<<<< HEAD
 @import './styles/tokens.css';
 @import './styles/globals.css';
+=======
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  body {
+    @apply bg-brand-light text-slate-900 dark:bg-brand-dark dark:text-zinc-100 transition-colors duration-200 antialiased min-h-screen selection:bg-brand-red selection:text-white;
+  }
+}
+>>>>>>> cd6475a57766841e4910394643593e42a74146ad
