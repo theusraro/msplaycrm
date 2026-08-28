@@ -1,0 +1,17 @@
+{
+  "name": "msplay-backend",
+  "version": "3.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "node dist/index.js",
+    "start": "node dist/index.js",
+    "build": "tsc",
+    "test": "node src/tests/runTests.js",
+    "migrate": "node dist/database/migrator.js",
+    "seed:dev": "node dist/cli/seedDev.js",
+    "create-admin": "node dist/cli/createAdmin.js"
+  },
+  "dependencies": {},
+  "devDependencies": {}
+}

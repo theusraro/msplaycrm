@@ -1,0 +1,144 @@
+:root {
+  /* Colors */
+  --ms-bg: #0a0a0a;
+  --ms-bg-elevated: #121212;
+  --ms-surface: #1a1a1a;
+  --ms-surface-hover: #242424;
+  --ms-surface-active: #2a2a2a;
+  --ms-red: #E50914;
+  --ms-red-hover: #F6121D;
+  --ms-red-dark: #B2070F;
+  --ms-text: #FFFFFF;
+  --ms-text-secondary: #B3B3B3;
+  --ms-text-muted: #808080;
+  --ms-text-disabled: #4D4D4D;
+  --ms-border: #2A2A2A;
+  --ms-border-light: #333333;
+  --ms-overlay: rgba(0, 0, 0, 0.7);
+  --ms-overlay-light: rgba(0, 0, 0, 0.4);
+  
+  /* Focus */
+  --ms-focus: 0 0 0 2px var(--ms-red);
+  --ms-focus-inset: inset 0 0 0 2px var(--ms-red);
+  
+  /* Typography */
+  --ms-font-family: 'Inter', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  --ms-font-display: 3rem;
+  --ms-font-h1: 2rem;
+  --ms-font-h2: 1.5rem;
+  --ms-font-h3: 1.25rem;
+  --ms-font-body: 1rem;
+  --ms-font-caption: 0.875rem;
+  --ms-font-metadata: 0.75rem;
+  --ms-font-weight-normal: 400;
+  --ms-font-weight-medium: 500;
+  --ms-font-weight-semibold: 600;
+  --ms-font-weight-bold: 700;
+  --ms-line-height-tight: 1.2;
+  --ms-line-height-normal: 1.5;
+  --ms-line-height-relaxed: 1.7;
+  
+  /* Spacing */
+  --ms-space-xs: 0.25rem;
+  --ms-space-sm: 0.5rem;
+  --ms-space-md: 1rem;
+  --ms-space-lg: 1.5rem;
+  --ms-space-xl: 2rem;
+  --ms-space-2xl: 3rem;
+  --ms-space-3xl: 4rem;
+  
+  /* Radius */
+  --ms-radius-sm: 4px;
+  --ms-radius-md: 8px;
+  --ms-radius-lg: 12px;
+  --ms-radius-xl: 16px;
+  --ms-radius-full: 9999px;
+  
+  /* Shadows */
+  --ms-shadow-card: 0 2px 8px rgba(0, 0, 0, 0.3);
+  --ms-shadow-elevated: 0 8px 24px rgba(0, 0, 0, 0.4);
+  --ms-shadow-focus: 0 0 0 2px var(--ms-red), 0 0 12px rgba(229, 9, 20, 0.3);
+  --ms-shadow-glow: 0 0 20px rgba(229, 9, 20, 0.15);
+  
+  /* Animation */
+  --ms-duration-fast: 150ms;
+  --ms-duration-normal: 250ms;
+  --ms-duration-slow: 400ms;
+  --ms-easing: cubic-bezier(0.4, 0, 0.2, 1);
+  --ms-easing-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+  --ms-easing-out: cubic-bezier(0, 0, 0.2, 1);
+  
+  /* Z-index */
+  --ms-z-base: 0;
+  --ms-z-elevated: 10;
+  --ms-z-sticky: 100;
+  --ms-z-overlay: 500;
+  --ms-z-modal: 1000;
+  --ms-z-toast: 1500;
+  --ms-z-player: 2000;
+  
+  /* Layout */
+  --ms-sidebar-width-collapsed: 64px;
+  --ms-sidebar-width-expanded: 220px;
+  --ms-header-height: 64px;
+  --ms-bottom-nav-height: 64px;
+  --ms-tv-safe-area: 48px;
+  --ms-content-max-width: 1400px;
+  
+  /* Card sizes */
+  --ms-card-width-sm: 130px;
+  --ms-card-width-md: 160px;
+  --ms-card-width-lg: 200px;
+  --ms-card-ratio: 1.5;
+}
+
+/* TV overrides - larger everything */
+[data-device='tv'] {
+  --ms-font-display: 4rem;
+  --ms-font-h1: 2.5rem;
+  --ms-font-h2: 1.75rem;
+  --ms-font-h3: 1.5rem;
+  --ms-font-body: 1.125rem;
+  --ms-font-caption: 1rem;
+  --ms-font-metadata: 0.875rem;
+  --ms-space-md: 1.25rem;
+  --ms-space-lg: 2rem;
+  --ms-space-xl: 2.5rem;
+  --ms-card-width-sm: 180px;
+  --ms-card-width-md: 220px;
+  --ms-card-width-lg: 260px;
+  --ms-tv-safe-area: 48px;
+}
+
+/* Mobile overrides - compact */
+[data-device='mobile'] {
+  --ms-font-display: 2rem;
+  --ms-font-h1: 1.5rem;
+  --ms-font-h2: 1.25rem;
+  --ms-font-h3: 1.125rem;
+  --ms-font-body: 0.9375rem;
+  --ms-font-caption: 0.8125rem;
+  --ms-font-metadata: 0.6875rem;
+  --ms-space-lg: 1rem;
+  --ms-space-xl: 1.5rem;
+  --ms-card-width-sm: 110px;
+  --ms-card-width-md: 130px;
+  --ms-card-width-lg: 160px;
+  --ms-header-height: 56px;
+  --ms-bottom-nav-height: 56px;
+}
+
+/* Reduced motion */
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --ms-duration-fast: 0ms;
+    --ms-duration-normal: 0ms;
+    --ms-duration-slow: 0ms;
+  }
+}
+
+.ms-reduce-motion {
+  --ms-duration-fast: 0ms;
+  --ms-duration-normal: 0ms;
+  --ms-duration-slow: 0ms;
+}

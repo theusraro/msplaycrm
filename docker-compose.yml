@@ -1,0 +1,19 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: msplay-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: msplay
+      POSTGRES_PASSWORD: msplay_secret
+      POSTGRES_DB: msplay_db
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./server/src/database/schema.sql:/docker-entrypoint-initdb.d/schema.sql
+
+volumes:
+  pgdata:
