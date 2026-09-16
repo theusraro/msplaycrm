@@ -1,10 +1,18 @@
-import { defineConfig } from 'vite'
-import react from '@vitejs/plugin-react'
+﻿import { defineConfig } from 'vite';
+import react from '@vitejs/plugin-react';
 
-<<<<<<< HEAD
-// https://vite.dev/config/
-=======
->>>>>>> cd6475a57766841e4910394643593e42a74146ad
 export default defineConfig({
   plugins: [react()],
-})
+  build: {
+    rollupOptions: {
+      output: {
+        manualChunks: {
+          vendor: ['react', 'react-dom', 'react-router-dom'],
+          supabase: ['@supabase/supabase-js'],
+          icons: ['lucide-react'],
+          data: ['xlsx', 'papaparse'],
+        },
+      },
+    },
+  },
+});

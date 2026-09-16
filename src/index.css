@@ -1,14 +1,26 @@
-<<<<<<< HEAD
-@import './styles/tokens.css';
-@import './styles/globals.css';
-=======
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
 @layer base {
   body {
-    @apply bg-brand-light text-slate-900 dark:bg-brand-dark dark:text-zinc-100 transition-colors duration-200 antialiased min-h-screen selection:bg-brand-red selection:text-white;
+    @apply bg-brand-dark text-zinc-100 transition-colors duration-200 antialiased min-h-screen selection:bg-brand-red selection:text-white font-sans;
   }
 }
->>>>>>> cd6475a57766841e4910394643593e42a74146ad
+
+/* Custom scrollbars */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: #0f0f0f;
+}
+::-webkit-scrollbar-thumb {
+  background: #27272a;
+  border-radius: 9999px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #3f3f46;
+}
+

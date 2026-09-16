@@ -1,45 +1,37 @@
 import React from 'react';
+import { LucideIcon } from 'lucide-react';
 
-interface Props {
-  icon?: string;
+interface EmptyStateProps {
+  icon: LucideIcon;
   title: string;
-  description?: string;
-  actionLabel?: string;
-  onAction?: () => void;
+  description: string;
+  action?: {
+    label: string;
+    onClick: () => void;
+  };
 }
 
-export const EmptyState: React.FC<Props> = ({ icon = '📭', title, description, actionLabel, onAction }) => (
-  <div style={{
-    display: 'flex',
-    flexDirection: 'column',
-    alignItems: 'center',
-    justifyContent: 'center',
-    padding: '48px 24px',
-    textAlign: 'center',
-  }}>
-    <div style={{ fontSize: '3rem', marginBottom: '16px', opacity: 0.6 }}>{icon}</div>
-    <h3 style={{ margin: '0 0 8px', fontSize: '1.25rem', color: '#FFFFFF', fontWeight: 600 }}>{title}</h3>
-    {description && (
-      <p style={{ margin: '0 0 24px', fontSize: '0.875rem', color: '#808080', maxWidth: '300px', lineHeight: 1.5 }}>
-        {description}
-      </p>
-    )}
-    {actionLabel && onAction && (
-      <button
-        onClick={onAction}
-        style={{
-          padding: '10px 24px',
-          background: '#E50914',
-          color: '#FFFFFF',
-          border: 'none',
-          borderRadius: '6px',
-          fontSize: '0.875rem',
-          fontWeight: 600,
-          cursor: 'pointer',
-        }}
-      >
-        {actionLabel}
-      </button>
-    )}
-  </div>
-);
+export const EmptyState: React.FC<EmptyStateProps> = ({
+  icon: Icon,
+  title,
+  description,
+  action,
+}) => {
+  return (
+    <div className="flex min-h-[260px] flex-col items-center justify-center rounded-2xl border border-dashed border-zinc-800 bg-[#121212]/50 p-8 text-center">
+      <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-zinc-900 border border-zinc-800 text-zinc-400 mb-4">
+        <Icon className="h-6 w-6 text-brand-red" />
+      </div>
+      <h3 className="text-sm font-bold text-white mb-1">{title}</h3>
+      <p className="text-xs text-zinc-400 max-w-sm mb-4">{description}</p>
+      {action && (
+        <button
+          onClick={action.onClick}
+          className="inline-flex items-center gap-2 rounded-xl bg-brand-red px-4 py-2 text-xs font-bold text-white shadow-lg shadow-brand-red/20 transition-all hover:bg-brand-redHover active:scale-95"
+        >
+          {action.label}
+        </button>
+      )}
+    </div>
+  );
+};

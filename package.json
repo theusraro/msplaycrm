@@ -1,45 +1,11 @@
 {
-<<<<<<< HEAD
-  "name": "msply",
-  "private": true,
-  "version": "0.0.0",
-  "type": "module",
-  "scripts": {
-    "dev": "vite",
-    "build": "vite build",
-    "build:server": "tsc --project server/tsconfig.json",
-    "test": "node server/src/tests/runTests.js",
-    "test:server": "node server/src/tests/runTests.js",
-    "lint": "oxlint",
-    "preview": "vite preview"
-  },
-  "dependencies": {
-    "@capacitor/android": "^8.5.0",
-    "@capacitor/cli": "^8.5.0",
-    "@capacitor/core": "^8.5.0",
-    "react": "^19.2.8",
-    "react-dom": "^19.2.8",
-    "react-router-dom": "^7.18.2"
-  },
-  "devDependencies": {
-    "@rolldown/binding-win32-x64-msvc": "^1.2.5",
-    "@types/node": "^24.13.3",
-    "@types/react": "^19.2.17",
-    "@types/react-dom": "^19.2.3",
-    "@vitejs/plugin-react": "^6.0.4",
-    "lodash": "^4.18.1",
-    "oxlint": "^1.75.0",
-    "rolldown": "^1.2.5",
-    "typescript": "^6.0.3",
-    "vite": "^8.2.2"
-=======
-  "name": "msplay-whatsapp-crm",
+  "name": "msplay-crm",
   "private": true,
   "version": "1.0.0",
   "type": "module",
- "scripts": {
+  "scripts": {
     "dev": "vite",
-    "build": "node node_modules/vite/bin/vite.js build",
+    "build": "tsc && vite build",
     "preview": "vite preview"
   },
   "dependencies": {
@@ -55,6 +21,7 @@
   },
   "devDependencies": {
     "@types/node": "^22.13.4",
+    "@types/papaparse": "^5.3.15",
     "@types/react": "^18.3.18",
     "@types/react-dom": "^18.3.5",
     "@vercel/node": "^7.0.0",
@@ -64,6 +31,5 @@
     "tailwindcss": "^3.4.17",
     "typescript": "^5.7.3",
     "vite": "^6.1.0"
->>>>>>> cd6475a57766841e4910394643593e42a74146ad
   }
 }
