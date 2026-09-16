@@ -1,382 +1,290 @@
 import React, { useState, useEffect } from 'react';
 import { supabase } from '../../lib/supabase';
-import { useAuth } from '../../contexts/AuthContext';
 import { MetricCard } from '../../components/ui/MetricCard';
 import { FunnelChart } from '../../components/admin/FunnelChart';
 import { SalesTimelineChart } from '../../components/admin/SalesTimelineChart';
 import { ActivityTimelineChart } from '../../components/admin/ActivityTimelineChart';
-import { calculateActivityStatus, formatRelativeActivity } from '../../utils/activityCalculator';
+import { ResellerDrawer } from '../../components/admin/ResellerDrawer';
+import { calculateResellerActivity, ActivitySummary } from '../../utils/activityCalculator';
+import { Profile, Sale, Contact } from '../../types';
 import {
   Users,
-  Inbox,
   UserCheck,
-  UserX,
-  ShoppingBag,
   TrendingUp,
-  MessageSquare,
-  Sparkles,
-  RefreshCw,
-  AlertCircle,
+  DollarSign,
+  AlertTriangle,
   ArrowRight,
+  UserX,
+  Sparkles,
+  Zap,
+  Activity,
+  Layers,
+  ChevronRight,
+  RefreshCw
 } from 'lucide-react';
 
 interface DashboardViewProps {
-  onNavigate: (view: any) => void;
+  onNavigateTab: (tab: string) => void;
 }
 
-export const DashboardView: React.FC<DashboardViewProps> = ({ onNavigate }) => {
-  const { profile } = useAuth();
+export const DashboardView: React.FC<DashboardViewProps> = ({ onNavigateTab }) => {
   const [loading, setLoading] = useState(true);
+  const [resellers, setResellers] = useState<Profile[]>([]);
+  const [sales, setSales] = useState<Sale[]>([]);
+  const [contacts, setContacts] = useState<Contact[]>([]);
+  const [assignments, setAssignments] = useState<any[]>([]);
+  const [selectedReseller, setSelectedReseller] = useState<Profile | null>(null);
+  const [activitySummaries, setActivitySummaries] = useState<Record<string, ActivitySummary>>({});
 
-  // Métricas Principais
-  const [metrics, setMetrics] = useState({
-    totalResellers: 0,
-    activeResellers: 0,
-    inactiveResellers: 0,
-    totalLeads: 0,
-    distributedLeads: 0,
-    availableLeads: 0,
-    salesThisMonth: 0,
-    totalSales: 0,
-    totalSalesValue: 0,
-    conversionRate: '0.0',
-    totalMessages: 0,
-  });
-
-  const [funnelData, setFunnelData] = useState({
-    novo: 0,
-    em_contato: 0,
-    pendente: 0,
-    concluido: 0,
-    perdido: 0,
-  });
-
-  const [salesTimeline, setSalesTimeline] = useState<any[]>([]);
-  const [activityTimeline, setActivityTimeline] = useState<any[]>([]);
-  const [recentSales, setRecentSales] = useState<any[]>([]);
-  const [inactiveResellersList, setInactiveResellersList] = useState<any[]>([]);
-
-  const fetchDashboardData = async () => {
+  const loadData = async () => {
     setLoading(true);
     try {
-      // 1. Revendedores e Atividade
-      const { data: profilesData } = await supabase
-        .from('profiles')
-        .select('*')
-        .eq('role', 'user');
+      const [resellersRes, salesRes, contactsRes, assignmentsRes] = await Promise.all([
+        supabase.from('profiles').select('*').eq('role', 'reseller'),
+        supabase.from('sales').select('*').order('created_at', { ascending: false }),
+        supabase.from('contacts').select('*'),
+        supabase.from('contact_assignments').select('*')
+      ]);
 
-      const resellers = profilesData || [];
-      let activeCount = 0;
-      let inactiveCount = 0;
-      const inactiveList: any[] = [];
+      const resList = resellersRes.data || [];
+      const salesList = salesRes.data || [];
+      const contactsList = contactsRes.data || [];
+      const assignList = assignmentsRes.data || [];
 
-      resellers.forEach((r) => {
-        const act = calculateActivityStatus(r.last_activity_at || r.created_at);
-        if (act === 'ativo') activeCount++;
-        else if (act === 'inativo') {
-          inactiveCount++;
-          inactiveList.push(r);
-        }
+      setResellers(resList);
+      setSales(salesList);
+      setContacts(contactsList);
+      setAssignments(assignList);
+
+      // Calculate activities
+      const summaries: Record<string, ActivitySummary> = {};
+      resList.forEach(r => {
+        const rSales = salesList.filter(s => s.user_id === r.id);
+        const rAssigns = assignList.filter(a => a.user_id === r.id);
+        summaries[r.id] = calculateResellerActivity(r, rSales, rAssigns);
       });
-      setInactiveResellersList(inactiveList.slice(0, 5));
-
-      // 2. Leads (Total e Atribuições)
-      const { count: contactsCount } = await supabase
-        .from('contacts')
-        .select('*', { count: 'exact', head: true });
-      const totalContacts = contactsCount || 0;
-
-      const { data: assignmentsData } = await supabase
-        .from('contact_assignments')
-        .select('id, status, assigned_at, user_id, contact_id');
-
-      const assignments = assignmentsData || [];
-      const assignedContactIds = new Set(assignments.map((a) => a.contact_id));
-      const distributedCount = assignedContactIds.size;
-      const availableCount = Math.max(0, totalContacts - distributedCount);
-
-      // Funil
-      const funnel = { novo: 0, em_contato: 0, pendente: 0, concluido: 0, perdido: 0 };
-      assignments.forEach((a) => {
-        const st = (a.status || 'novo') as keyof typeof funnel;
-        if (st in funnel) funnel[st]++;
-      });
-      setFunnelData(funnel);
-
-      // 3. Vendas
-      const { data: salesData } = await supabase
-        .from('sales')
-        .select('*, contacts (nome, telefone), profiles (nome, email)')
-        .order('created_at', { ascending: false });
-
-      const allSales = salesData || [];
-      const now = new Date();
-      const firstDayOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
-
-      const salesMonth = allSales.filter((s) => new Date(s.created_at) >= firstDayOfMonth);
-      const totalValue = allSales.reduce((acc, s) => acc + Number(s.valor || 0), 0);
-
-      const totalConversions = allSales.length > 0 ? allSales.length : funnel.concluido;
-      const totalLeadsBase = totalContacts > 0 ? totalContacts : assignments.length;
-      const conversionPercent = totalLeadsBase > 0 ? ((totalConversions / totalLeadsBase) * 100).toFixed(1) : '0.0';
-
-      setRecentSales(allSales.slice(0, 6));
-
-      // 4. Mensagens IA
-      const { count: msgCount, data: msgLogs } = await supabase
-        .from('messages_log')
-        .select('id, created_at', { count: 'exact' })
-        .order('created_at', { ascending: false })
-        .limit(300);
-
-      // 5. Gráfico de Vendas nos últimos 30 dias
-      const last30Days: any[] = [];
-      const activityPoints: any[] = [];
-
-      for (let i = 29; i >= 0; i--) {
-        const d = new Date();
-        d.setDate(d.getDate() - i);
-        const dateStr = d.toISOString().split('T')[0];
-        const displayDate = d.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' });
-
-        // Vendas no dia
-        const daySales = allSales.filter((s) => s.created_at.startsWith(dateStr));
-        const daySalesValue = daySales.reduce((acc, s) => acc + Number(s.valor || 0), 0);
-
-        last30Days.push({
-          date: dateStr,
-          displayDate,
-          count: daySales.length,
-          totalValue: daySalesValue,
-        });
-
-        // Atividade no dia (Mensagens + Atribuições)
-        const dayMsgs = (msgLogs || []).filter((m) => m.created_at.startsWith(dateStr)).length;
-        const dayAssignments = assignments.filter((a) => a.assigned_at.startsWith(dateStr)).length;
-
-        activityPoints.push({
-          date: dateStr,
-          displayDate,
-          messages: dayMsgs,
-          assignments: dayAssignments,
-        });
-      }
-
-      setSalesTimeline(last30Days);
-      setActivityTimeline(activityPoints);
-
-      setMetrics({
-        totalResellers: resellers.length,
-        activeResellers: activeCount,
-        inactiveResellers: inactiveCount,
-        totalLeads: totalContacts,
-        distributedLeads: distributedCount,
-        availableLeads: availableCount,
-        salesThisMonth: salesMonth.length,
-        totalSales: allSales.length || funnel.concluido,
-        totalSalesValue: totalValue,
-        conversionRate: conversionPercent,
-        totalMessages: msgCount || 0,
-      });
+      setActivitySummaries(summaries);
     } catch (err) {
-      console.error('Erro ao buscar dados do dashboard:', err);
+      console.error('Erro ao carregar dados do dashboard:', err);
     } finally {
       setLoading(false);
     }
   };
 
   useEffect(() => {
-    fetchDashboardData();
+    loadData();
   }, []);
 
-  const greeting = () => {
-    const hour = new Date().getHours();
-    if (hour < 12) return 'Bom dia';
-    if (hour < 18) return 'Boa tarde';
-    return 'Boa noite';
-  };
+  // Compute Metrics
+  const totalResellers = resellers.length;
+  const activeResellers = Object.values(activitySummaries).filter(s => s.status === 'active').length;
+  const inactiveResellers = Object.values(activitySummaries).filter(s => s.status === 'inactive').length;
+
+  const totalSalesRevenue = sales.reduce((acc, s) => acc + Number(s.valor || 0), 0);
+  const totalSalesCount = sales.length;
+
+  const totalLeads = contacts.length;
+  const assignedLeadsCount = assignments.length;
+  const completedLeadsCount = assignments.filter(a => a.status === 'concluido').length;
+  const pendingLeadsCount = assignments.filter(a => a.status === 'pendente').length;
+  const newLeadsCount = assignments.filter(a => a.status === 'novo').length;
+
+  const conversionRate = assignedLeadsCount > 0 ? ((completedLeadsCount / assignedLeadsCount) * 100).toFixed(1) : '0';
+
+  // Funnel Data
+  const funnelStages = [
+    { label: 'Total de Leads na Base', count: totalLeads, color: 'bg-blue-500' },
+    { label: 'Leads DistribuÃ­dos', count: assignedLeadsCount, color: 'bg-indigo-500' },
+    { label: 'Em Atendimento (Pendente)', count: pendingLeadsCount, color: 'bg-amber-500' },
+    { label: 'Vendas ConcluÃ­das', count: completedLeadsCount, color: 'bg-emerald-500' },
+  ];
+
+  // Inactive Alerts (>3 days or never)
+  const inactiveList = resellers.filter(r => {
+    const sum = activitySummaries[r.id];
+    return sum && sum.status === 'inactive';
+  });
+
+  // Top Resellers by completed leads / sales
+  const topResellers = [...resellers].sort((a, b) => {
+    const aSales = activitySummaries[a.id]?.totalSales || 0;
+    const bSales = activitySummaries[b.id]?.totalSales || 0;
+    return bSales - aSales;
+  }).slice(0, 5);
 
   return (
-    <div className="space-y-6 animate-in fade-in duration-200">
-      {/* Header com Saudação em Tempo Real */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-zinc-800 pb-5">
+    <div className="space-y-6">
+      {/* Top Header Controls */}
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
-          <h1 className="text-xl sm:text-2xl font-black text-white tracking-tight flex items-center gap-2">
-            {greeting()}, <span className="text-brand-red">{profile?.nome || 'Admin'}</span>
+          <h1 className="text-xl font-black text-slate-900 dark:text-white tracking-tight">
+            VisÃ£o Geral de OperaÃ§Ãµes CRM
           </h1>
-          <p className="text-xs text-zinc-400 mt-1">
-            Acompanhe sua operação MSPLAY em tempo real.
+          <p className="text-xs text-slate-500 dark:text-zinc-400 mt-0.5">
+            Monitoramento em tempo real de revendedores, pipeline de leads e faturamento.
           </p>
         </div>
-        <button
-          onClick={fetchDashboardData}
-          disabled={loading}
-          className="flex items-center gap-2 rounded-xl border border-zinc-800 bg-zinc-900 px-3.5 py-2 text-xs font-bold text-zinc-300 hover:border-zinc-700 hover:text-white transition"
-        >
-          <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin text-brand-red' : ''}`} />
-          <span>Atualizar Dados</span>
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={loadData}
+            disabled={loading}
+            className="p-2 text-xs font-semibold rounded-xl border border-brand-lightBorder dark:border-brand-darkBorder bg-white dark:bg-brand-darkCard hover:bg-slate-50 dark:hover:bg-brand-dark text-slate-700 dark:text-zinc-300 flex items-center gap-1.5 transition shadow-sm"
+          >
+            <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
+            Atualizar
+          </button>
+        </div>
       </div>
 
-      {/* Grid de Cards de Métricas Operacionais */}
+      {/* Primary KPI Grid */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         <MetricCard
+          title="Faturamento Total"
+          value={`R$ ${totalSalesRevenue.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
+          subtitle={`${totalSalesCount} vendas registradas`}
+          icon={<DollarSign className="w-5 h-5" />}
+          variant="success"
+        />
+        <MetricCard
           title="Revendedores Ativos"
-          value={`${metrics.activeResellers} / ${metrics.totalResellers}`}
-          subtitle={`${metrics.inactiveResellers} parados sem atividade`}
-          icon={Users}
-          accentColor="text-brand-red"
-          loading={loading}
+          value={`${activeResellers} / ${totalResellers}`}
+          subtitle={`${inactiveResellers} inativos (+3 dias)`}
+          icon={<Users className="w-5 h-5" />}
+          variant={inactiveResellers > 0 ? 'warning' : 'default'}
         />
         <MetricCard
-          title="Leads na Base"
-          value={metrics.totalLeads}
-          subtitle={`${metrics.distributedLeads} distribuídos • ${metrics.availableLeads} livres`}
-          icon={Inbox}
-          accentColor="text-sky-400"
-          loading={loading}
+          title="Taxa de ConversÃ£o"
+          value={`${conversionRate}%`}
+          subtitle={`${completedLeadsCount} vendas de ${assignedLeadsCount} leads`}
+          icon={<TrendingUp className="w-5 h-5" />}
+          variant="default"
         />
         <MetricCard
-          title="Vendas no Mês"
-          value={metrics.salesThisMonth}
-          subtitle={`Total acumulado: ${metrics.totalSales} vendas`}
-          icon={ShoppingBag}
-          accentColor="text-emerald-400"
-          loading={loading}
-        />
-        <MetricCard
-          title="Taxa de Conversão"
-          value={`${metrics.conversionRate}%`}
-          subtitle={`${metrics.totalMessages} mensagens IA geradas`}
-          icon={TrendingUp}
-          accentColor="text-amber-400"
-          loading={loading}
+          title="Leads no Sistema"
+          value={totalLeads}
+          subtitle={`${assignedLeadsCount} distribuÃ­dos â€¢ ${totalLeads - assignedLeadsCount} livres`}
+          icon={<Layers className="w-5 h-5" />}
+          variant="default"
         />
       </div>
 
-      {/* Seção de Gráficos: Funil + Vendas nos 30 dias */}
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-        <div className="lg:col-span-5">
-          <FunnelChart data={funnelData} totalLeads={metrics.totalLeads} />
+      {/* Inactivity Alert Banner if any */}
+      {inactiveList.length > 0 && (
+        <div className="bg-amber-500/10 border border-amber-500/20 rounded-2xl p-4 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+          <div className="flex items-center gap-3">
+            <div className="p-2 bg-amber-500/20 rounded-xl text-amber-600 dark:text-amber-400">
+              <AlertTriangle className="w-5 h-5" />
+            </div>
+            <div>
+              <h4 className="text-xs font-bold text-amber-900 dark:text-amber-200">
+                AtenÃ§Ã£o: {inactiveList.length} revendedor(es) sem atividade recente
+              </h4>
+              <p className="text-[11px] text-amber-700 dark:text-amber-300">
+                Revendedores sem vendas ou contato com leads nos Ãºltimos 3 dias podem estar acumulando leads sem atendimento.
+              </p>
+            </div>
+          </div>
+          <button
+            onClick={() => onNavigateTab('resellers')}
+            className="px-3 py-1.5 bg-amber-500 text-white rounded-xl text-xs font-bold hover:bg-amber-600 transition shrink-0 flex items-center gap-1.5"
+          >
+            Ver Inativos <ArrowRight className="w-3.5 h-3.5" />
+          </button>
         </div>
-        <div className="lg:col-span-7">
-          <SalesTimelineChart data={salesTimeline} />
+      )}
+
+      {/* Charts Grid: Funnel & Sales Timeline */}
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+        <div className="lg:col-span-6">
+          <FunnelChart stages={funnelStages} />
+        </div>
+        <div className="lg:col-span-6">
+          <SalesTimelineChart sales={sales} days={14} />
         </div>
       </div>
 
-      {/* Atividade da Equipe e Alerta de Revendedores Parados */}
+      {/* Activity Heatmap Timeline & Top Resellers */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
         <div className="lg:col-span-7">
-          <ActivityTimelineChart data={activityTimeline} />
+          <ActivityTimelineChart resellers={resellers} sales={sales} assignments={assignments} />
         </div>
 
-        {/* Card de Revendedores Parados / Sem Atividade */}
-        <div className="lg:col-span-5 rounded-2xl border border-zinc-800 bg-[#121212] p-6 flex flex-col justify-between">
+        {/* Top Resellers Leaderboard */}
+        <div className="lg:col-span-5 bg-white dark:bg-brand-darkCard border border-brand-lightBorder dark:border-brand-darkBorder rounded-2xl p-5 shadow-sm flex flex-col justify-between">
           <div>
             <div className="flex items-center justify-between mb-4">
-              <h3 className="text-sm font-bold text-white uppercase tracking-wider flex items-center gap-2">
-                <AlertCircle className="w-4 h-4 text-amber-500" /> Revendedores Parados
-              </h3>
+              <div className="flex items-center gap-2">
+                <Sparkles className="w-4 h-4 text-brand-red" />
+                <h3 className="text-xs font-black uppercase tracking-wider text-slate-900 dark:text-white">
+                  Top Revendedores
+                </h3>
+              </div>
               <button
-                onClick={() => onNavigate('resellers')}
-                className="text-xs font-bold text-brand-red hover:underline flex items-center gap-1"
+                onClick={() => onNavigateTab('resellers')}
+                className="text-[11px] font-bold text-brand-red hover:underline flex items-center gap-1"
               >
-                Ver todos <ArrowRight className="w-3.5 h-3.5" />
+                Ver todos <ChevronRight className="w-3 h-3" />
               </button>
             </div>
-            <p className="text-xs text-zinc-400 mb-4">
-              Revendedores cadastrados sem atividade recente nos últimos 7 dias.
-            </p>
 
             <div className="space-y-2.5">
-              {inactiveResellersList.map((reseller) => (
-                <div
-                  key={reseller.id}
-                  className="flex items-center justify-between p-3 rounded-xl border border-zinc-800/80 bg-zinc-900/40 text-xs"
-                >
-                  <div className="flex items-center gap-2.5">
-                    <div className="h-8 w-8 rounded-lg bg-zinc-800 text-zinc-400 flex items-center justify-center font-bold text-[11px]">
-                      {reseller.nome.substring(0, 2).toUpperCase()}
+              {topResellers.map((r, idx) => {
+                const sum = activitySummaries[r.id];
+                return (
+                  <div
+                    key={r.id}
+                    onClick={() => setSelectedReseller(r)}
+                    className="p-2.5 rounded-xl border border-brand-lightBorder dark:border-brand-darkBorder hover:border-brand-red/40 dark:hover:border-brand-red/40 bg-slate-50/50 dark:bg-brand-dark/40 cursor-pointer transition flex items-center justify-between"
+                  >
+                    <div className="flex items-center gap-3">
+                      <div className="w-6 h-6 rounded-lg bg-brand-red/10 text-brand-red font-black text-xs flex items-center justify-center">
+                        #{idx + 1}
+                      </div>
+                      <div>
+                        <p className="text-xs font-bold text-slate-900 dark:text-white">
+                          {r.nome_completo || r.email}
+                        </p>
+                        <p className="text-[10px] text-slate-500">
+                          {sum?.completedLeads || 0} leads convertidos â€¢ {sum?.totalSales || 0} vendas
+                        </p>
+                      </div>
                     </div>
-                    <div>
-                      <p className="font-bold text-white">{reseller.nome}</p>
-                      <p className="text-[10px] text-zinc-500">{reseller.email}</p>
+                    <div className="text-right">
+                      <span className="text-xs font-bold text-emerald-600 dark:text-emerald-400">
+                        {sum?.conversionRate || 0}%
+                      </span>
+                      <p className="text-[9px] text-slate-400">conversÃ£o</p>
                     </div>
                   </div>
-                  <span className="text-[10px] text-amber-400/90 font-semibold">
-                    {formatRelativeActivity(reseller.last_activity_at || reseller.created_at)}
-                  </span>
-                </div>
-              ))}
-              {inactiveResellersList.length === 0 && (
-                <div className="py-8 text-center text-xs text-zinc-500">
-                  ?? Nenhum revendedor inativo no momento!
-                </div>
+                );
+              })}
+              {topResellers.length === 0 && (
+                <p className="text-xs text-slate-400 text-center py-6">Nenhum revendedor cadastrado.</p>
               )}
             </div>
           </div>
 
-          <div className="mt-4 pt-4 border-t border-zinc-800/80">
+          <div className="mt-4 pt-4 border-t border-brand-lightBorder dark:border-brand-darkBorder flex items-center justify-between text-xs">
+            <span className="text-slate-500">DistribuiÃ§Ã£o rÃ¡pida de leads</span>
             <button
-              onClick={() => onNavigate('leads')}
-              className="w-full py-2.5 rounded-xl bg-zinc-900 hover:bg-zinc-850 border border-zinc-800 text-xs font-bold text-zinc-200 flex items-center justify-center gap-2 transition"
+              onClick={() => onNavigateTab('leads')}
+              className="px-3 py-1.5 bg-brand-red text-white font-bold rounded-xl text-xs hover:bg-brand-redHover transition flex items-center gap-1.5"
             >
-              <Inbox className="w-4 h-4 text-brand-red" /> Distribuir Novos Leads para a Equipe
+              <Zap className="w-3.5 h-3.5" /> Distribuir Agora
             </button>
           </div>
         </div>
       </div>
 
-      {/* Auditoria de Últimas Vendas */}
-      <div className="rounded-2xl border border-zinc-800 bg-[#121212] p-6 shadow-sm">
-        <div className="flex items-center justify-between mb-4">
-          <h3 className="text-sm font-bold text-white uppercase tracking-wider flex items-center gap-2">
-            <ShoppingBag className="w-4 h-4 text-emerald-500" /> Últimas Vendas Convertidas
-          </h3>
-          <button
-            onClick={() => onNavigate('sales')}
-            className="text-xs font-bold text-brand-red hover:underline flex items-center gap-1"
-          >
-            Ver todas <ArrowRight className="w-3.5 h-3.5" />
-          </button>
-        </div>
-
-        <div className="overflow-x-auto">
-          <table className="w-full text-left text-xs">
-            <thead>
-              <tr className="border-b border-zinc-800 text-zinc-400 uppercase text-[11px]">
-                <th className="pb-3 font-semibold">Revendedor</th>
-                <th className="pb-3 font-semibold">Cliente Convertido</th>
-                <th className="pb-3 font-semibold">Telefone</th>
-                <th className="pb-3 font-semibold">Valor</th>
-                <th className="pb-3 font-semibold text-right">Data/Hora</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-zinc-800/60">
-              {recentSales.map((sale) => (
-                <tr key={sale.id} className="hover:bg-zinc-900/30 transition">
-                  <td className="py-3 font-bold text-brand-red">{sale.profiles?.nome || 'Revendedor'}</td>
-                  <td className="py-3 font-semibold text-white">{sale.contacts?.nome || 'Cliente'}</td>
-                  <td className="py-3 text-zinc-400">{sale.contacts?.telefone || '-'}</td>
-                  <td className="py-3 font-bold text-emerald-400">
-                    {sale.valor > 0 ? `R$ ${Number(sale.valor).toFixed(2)}` : 'Concluída'}
-                  </td>
-                  <td className="py-3 text-right text-zinc-500">
-                    {new Date(sale.created_at).toLocaleString('pt-BR')}
-                  </td>
-                </tr>
-              ))}
-              {recentSales.length === 0 && (
-                <tr>
-                  <td colSpan={5} className="py-8 text-center text-zinc-500">
-                    Nenhuma venda concluída registrada até o momento.
-                  </td>
-                </tr>
-              )}
-            </tbody>
-          </table>
-        </div>
-      </div>
+      {/* Selected Reseller Drawer */}
+      {selectedReseller && (
+        <ResellerDrawer
+          reseller={selectedReseller}
+          summary={activitySummaries[selectedReseller.id]}
+          onClose={() => setSelectedReseller(null)}
+          onUpdate={loadData}
+        />
+      )}
     </div>
   );
 };

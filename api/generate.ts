@@ -1,17 +1,7 @@
+import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { createClient } from '@supabase/supabase-js';
 
-interface ApiRequest {
-  method?: string;
-  headers: Record<string, string | string[] | undefined>;
-  body: any;
-}
-
-interface ApiResponse {
-  status: (code: number) => ApiResponse;
-  json: (data: any) => void;
-}
-
-export default async function handler(req: ApiRequest, res: ApiResponse) {
+export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (req.method !== 'POST') return res.status(405).json({ error: 'Método não permitido' });
 
   const authHeader = req.headers.authorization;
@@ -22,7 +12,7 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
     process.env.VITE_SUPABASE_ANON_KEY || ''
   );
 
-  const token = typeof authHeader === 'string' ? authHeader.replace('Bearer ', '') : '';
+  const token = (typeof authHeader === 'string' ? authHeader : authHeader[0] || '').replace('Bearer ', '');
   const { data: { user }, error: authError } = await supabase.auth.getUser(token);
   if (authError || !user) return res.status(401).json({ error: 'Sessão inválida' });
 

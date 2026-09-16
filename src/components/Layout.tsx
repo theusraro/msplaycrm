@@ -7,7 +7,7 @@ export const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) =>
   const { profile, signOut, isAdmin } = useAuth();
 
   return (
-    <div className="min-h-screen flex flex-col">
+    <div className="min-h-screen flex flex-col bg-brand-light dark:bg-brand-dark text-slate-900 dark:text-white transition-colors duration-200">
       <header className="sticky top-0 z-40 w-full border-b border-brand-lightBorder dark:border-brand-darkBorder bg-white/90 dark:bg-brand-darkCard/90 backdrop-blur-md px-4 lg:px-8 py-3 transition-colors duration-200">
         <div className="max-w-7xl mx-auto flex items-center justify-between">
           <div className="flex items-center gap-3">
@@ -35,11 +35,11 @@ export const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) =>
                   <UserCheck className="w-4 h-4 text-green-500" />
                 )}
                 <span className="font-semibold text-slate-800 dark:text-zinc-200">
-                  {profile.nome}
+                  {profile.nome_completo || profile.email}
                 </span>
                 <span className="text-slate-400 dark:text-zinc-500">|</span>
                 <span className="capitalize font-bold text-brand-red">
-                  {profile.role}
+                  {profile.role === 'admin' ? 'Administrador' : 'Revendedor'}
                 </span>
               </div>
             )}

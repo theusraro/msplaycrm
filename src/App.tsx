@@ -14,8 +14,8 @@ const AppRoutes: React.FC = () => {
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-[#0a0a0a] flex items-center justify-center">
-        <div className="w-8 h-8 border-2 border-brand-red border-t-transparent rounded-full animate-spin"></div>
+      <div className="min-h-screen bg-brand-light dark:bg-brand-dark flex items-center justify-center">
+        <div className="w-8 h-8 border-4 border-brand-red border-t-transparent rounded-full animate-spin"></div>
       </div>
     );
   }
@@ -27,15 +27,17 @@ const AppRoutes: React.FC = () => {
         element={user ? <Navigate to={isAdmin ? '/admin' : '/dashboard'} replace /> : <Login />}
       />
       <Route
-        path="/admin/*"
+        path="/admin"
         element={
           <ProtectedRoute requireAdmin={true}>
-            <AdminDashboard />
+            <Layout>
+              <AdminDashboard />
+            </Layout>
           </ProtectedRoute>
         }
       />
       <Route
-        path="/dashboard/*"
+        path="/dashboard"
         element={
           <ProtectedRoute>
             <Layout>
@@ -55,13 +57,13 @@ const AppRoutes: React.FC = () => {
 export default function App() {
   return (
     <ThemeProvider>
-      <ToastProvider>
-        <AuthProvider>
+      <AuthProvider>
+        <ToastProvider>
           <BrowserRouter>
             <AppRoutes />
           </BrowserRouter>
-        </AuthProvider>
-      </ToastProvider>
+        </ToastProvider>
+      </AuthProvider>
     </ThemeProvider>
   );
 }

@@ -1,372 +1,421 @@
-﻿import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect } from 'react';
 import { supabase } from '../../lib/supabase';
-import { Sale, Profile, Contact } from '../../types';
-import { StatusBadge } from '../../components/ui/StatusBadge';
-import { PageHeader } from '../../components/ui/PageHeader';
-import { MetricCard } from '../../components/ui/MetricCard';
-import { logAuditEvent } from '../../services/auditService';
 import { useToast } from '../../contexts/ToastContext';
+import { MetricCard } from '../../components/ui/MetricCard';
+import { StatusBadge } from '../../components/ui/StatusBadge';
+import { EmptyState } from '../../components/ui/EmptyState';
+import { logAuditEvent } from '../../services/auditService';
+import { Sale, Profile, Contact } from '../../types';
+import Papa from 'papaparse';
 import {
-  ShoppingBag,
   DollarSign,
   TrendingUp,
+  CreditCard,
+  Calendar,
   Search,
-  CheckCircle2,
   Plus,
-  Loader2,
+  Download,
+  RefreshCw,
   X,
+  User,
+  CheckCircle2
 } from 'lucide-react';
 
 export const SalesView: React.FC = () => {
-  const { success, error: toastError } = useToast();
+  const { addToast } = useToast();
   const [loading, setLoading] = useState(true);
   const [sales, setSales] = useState<Sale[]>([]);
   const [resellers, setResellers] = useState<Profile[]>([]);
   const [contacts, setContacts] = useState<Contact[]>([]);
 
-  // Filtros
+  // Filters
   const [searchTerm, setSearchTerm] = useState('');
+  const [dateFilter, setDateFilter] = useState<'all' | '7d' | '30d' | 'this_month'>('all');
   const [resellerFilter, setResellerFilter] = useState<string>('all');
-  const [periodFilter, setPeriodFilter] = useState<'all' | 'month' | '30days' | 'week'>('all');
 
-  // Modal de Registro Manual de Venda
-  const [isRegisterModalOpen, setIsRegisterModalOpen] = useState(false);
-  const [selectedContactId, setSelectedContactId] = useState('');
-  const [selectedUserId, setSelectedUserId] = useState('');
-  const [saleValue, setSaleValue] = useState('');
-  const [saleObs, setSaleObs] = useState('');
-  const [saleOrigin, setSaleOrigin] = useState('WhatsApp');
-  const [isSubmitting, setIsSubmitting] = useState(false);
+  // Modals
+  const [showCreateModal, setShowCreateModal] = useState(false);
+  const [newSaleData, setNewSaleData] = useState({
+    user_id: '',
+    contact_id: '',
+    valor: '',
+    plano: 'Mensal Padrão',
+    metodo_pagamento: 'pix',
+    observacoes: ''
+  });
+  const [saving, setSaving] = useState(false);
 
-  const fetchSalesData = async () => {
+  const loadData = async () => {
     setLoading(true);
     try {
-      // 1. Vendas completas com relacionamento de contatos e perfis
-      const { data: salesData, error: salesErr } = await supabase
-        .from('sales')
-        .select('*, contacts (*), profiles (*)')
-        .order('created_at', { ascending: false });
+      const [salesRes, resellersRes, contactsRes] = await Promise.all([
+        supabase
+          .from('sales')
+          .select('*, profiles:user_id(nome_completo, email), contacts:contact_id(nome, telefone)')
+          .order('created_at', { ascending: false }),
+        supabase.from('profiles').select('*').eq('role', 'reseller'),
+        supabase.from('contacts').select('*')
+      ]);
 
-      if (salesErr) throw salesErr;
-
-      // 2. Revendedores
-      const { data: profilesData } = await supabase
-        .from('profiles')
-        .select('*')
-        .eq('role', 'user')
-        .order('nome', { ascending: true });
-
-      // 3. Contatos para seleção
-      const { data: contactsData } = await supabase
-        .from('contacts')
-        .select('*')
-        .order('created_at', { ascending: false })
-        .limit(200);
-
-      setSales(salesData || []);
-      setResellers(profilesData || []);
-      setContacts(contactsData || []);
+      setSales(salesRes.data || []);
+      setResellers(resellersRes.data || []);
+      setContacts(contactsRes.data || []);
     } catch (err: any) {
-      console.error('Erro ao carregar vendas:', err);
-      toastError(`Erro ao carregar vendas: ${err.message}`);
+      addToast(err.message || 'Erro ao carregar vendas', 'error');
     } finally {
       setLoading(false);
     }
   };
 
   useEffect(() => {
-    fetchSalesData();
+    loadData();
   }, []);
 
-  const handleRegisterSale = async (e: React.FormEvent) => {
+  // Filter Sales
+  const filteredSales = sales.filter((s) => {
+    const resellerName = s.profiles?.nome_completo || s.profiles?.email || '';
+    const contactName = s.contacts?.nome || '';
+    const matchSearch =
+      resellerName.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      contactName.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      (s.plano && s.plano.toLowerCase().includes(searchTerm.toLowerCase()));
+
+    let matchDate = true;
+    const saleDate = new Date(s.created_at);
+    const now = new Date();
+
+    if (dateFilter === '7d') {
+      const cutoff = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+      matchDate = saleDate >= cutoff;
+    } else if (dateFilter === '30d') {
+      const cutoff = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+      matchDate = saleDate >= cutoff;
+    } else if (dateFilter === 'this_month') {
+      matchDate = saleDate.getMonth() === now.getMonth() && saleDate.getFullYear() === now.getFullYear();
+    }
+
+    let matchReseller = true;
+    if (resellerFilter !== 'all') {
+      matchReseller = s.user_id === resellerFilter;
+    }
+
+    return matchSearch && matchDate && matchReseller;
+  });
+
+  // Calculate Metrics
+  const totalRevenue = filteredSales.reduce((acc, s) => acc + Number(s.valor || 0), 0);
+  const totalCount = filteredSales.length;
+  const avgTicket = totalCount > 0 ? totalRevenue / totalCount : 0;
+
+  const handleCreateSale = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!selectedContactId || !selectedUserId) {
-      toastError('Selecione o cliente e o revendedor responsável.');
+    if (!newSaleData.valor || !newSaleData.user_id) {
+      addToast('Revendedor e valor são obrigatórios', 'warning');
       return;
     }
 
-    setIsSubmitting(true);
+    setSaving(true);
     try {
-      const { data, error } = await supabase.from('sales').insert({
-        contact_id: selectedContactId,
-        user_id: selectedUserId,
-        valor: parseFloat(saleValue) || 0.0,
-        origem: saleOrigin,
-        observacoes: saleObs || 'Registro manual via painel',
-        status: 'concluido',
-      }).select().single();
+      const payload: any = {
+        user_id: newSaleData.user_id,
+        valor: parseFloat(newSaleData.valor.replace(',', '.')),
+        plano: newSaleData.plano,
+        metodo_pagamento: newSaleData.metodo_pagamento,
+        observacoes: newSaleData.observacoes || null
+      };
 
+      if (newSaleData.contact_id) {
+        payload.contact_id = newSaleData.contact_id;
+      }
+
+      const { data, error } = await supabase.from('sales').insert([payload]).select().single();
       if (error) throw error;
 
-      // Atualizar status da atribuição se existir
-      await supabase
-        .from('contact_assignments')
-        .update({ status: 'concluido' })
-        .eq('contact_id', selectedContactId)
-        .eq('user_id', selectedUserId);
+      // Also update contact assignment to 'concluido' if contact specified
+      if (newSaleData.contact_id) {
+        await supabase
+          .from('contact_assignments')
+          .update({ status: 'concluido' })
+          .eq('contact_id', newSaleData.contact_id)
+          .eq('user_id', newSaleData.user_id);
+      }
 
-      await logAuditEvent({
-        acao: 'Registro de Venda',
-        entidade: 'sales',
-        entityId: data?.id,
-        detalhes: {
-          valor: saleValue,
-          origem: saleOrigin,
-          revendedorId: selectedUserId,
-        },
+      await logAuditEvent('create_sale', {
+        sale_id: data.id,
+        user_id: newSaleData.user_id,
+        valor: payload.valor,
+        plano: payload.plano
       });
 
-      success('Venda registrada com sucesso!');
-      setIsRegisterModalOpen(false);
-      setSelectedContactId('');
-      setSelectedUserId('');
-      setSaleValue('');
-      setSaleObs('');
-      fetchSalesData();
+      addToast('Venda registrada com sucesso!', 'success');
+      setShowCreateModal(false);
+      setNewSaleData({
+        user_id: '',
+        contact_id: '',
+        valor: '',
+        plano: 'Mensal Padrão',
+        metodo_pagamento: 'pix',
+        observacoes: ''
+      });
+      loadData();
     } catch (err: any) {
-      toastError(`Erro ao registrar venda: ${err.message}`);
+      addToast(err.message || 'Erro ao registrar venda', 'error');
     } finally {
-      setIsSubmitting(false);
+      setSaving(false);
     }
   };
 
-  // Filtragem
-  const filteredSales = useMemo(() => {
-    const now = new Date();
-    const firstDayOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
-    const last7Days = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
-    const last30Days = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+  const handleExportCSV = () => {
+    const exportData = filteredSales.map((s) => ({
+      ID: s.id,
+      Data: new Date(s.created_at).toLocaleString('pt-BR'),
+      Revendedor: s.profiles?.nome_completo || s.profiles?.email || 'N/A',
+      Cliente: s.contacts?.nome || 'Venda Avulsa',
+      Telefone: s.contacts?.telefone || 'N/A',
+      Plano: s.plano || 'Padrão',
+      Valor: Number(s.valor || 0).toFixed(2),
+      MetodoPagamento: s.metodo_pagamento || 'PIX'
+    }));
 
-    return sales.filter((s) => {
-      const matchSearch =
-        (s.profiles?.nome && s.profiles.nome.toLowerCase().includes(searchTerm.toLowerCase())) ||
-        (s.contacts?.nome && s.contacts.nome.toLowerCase().includes(searchTerm.toLowerCase())) ||
-        (s.contacts?.telefone && s.contacts.telefone.includes(searchTerm));
-      if (!matchSearch) return false;
-
-      if (resellerFilter !== 'all' && s.user_id !== resellerFilter) return false;
-
-      const saleDate = new Date(s.created_at);
-      if (periodFilter === 'month' && saleDate < firstDayOfMonth) return false;
-      if (periodFilter === '30days' && saleDate < last30Days) return false;
-      if (periodFilter === 'week' && saleDate < last7Days) return false;
-
-      return true;
-    });
-  }, [sales, searchTerm, resellerFilter, periodFilter]);
-
-  const totalValue = filteredSales.reduce((acc, s) => acc + Number(s.valor || 0), 0);
-  const averageTicket = filteredSales.length > 0 ? (totalValue / filteredSales.length).toFixed(2) : '0.00';
+    const csv = Papa.unparse(exportData);
+    const blob = new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.setAttribute('download', `vendas_msplay_${new Date().toISOString().slice(0, 10)}.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    addToast('Relatório de vendas exportado com sucesso', 'success');
+  };
 
   return (
-    <div className="space-y-6 animate-in fade-in duration-200">
-      <PageHeader
-        title="Auditoria & Histórico de Vendas"
-        subtitle="Monitore as conversões realizadas pelos revendedores e a receita gerada."
-        icon={ShoppingBag}
-        actions={
-          <button
-            onClick={() => setIsRegisterModalOpen(true)}
-            className="flex items-center gap-2 rounded-xl bg-brand-red px-4 py-2 text-xs font-bold text-white shadow-lg shadow-brand-red/20 transition-all hover:bg-brand-redHover active:scale-95"
-          >
-            <Plus className="w-4 h-4" />
-            <span>Registrar Venda</span>
-          </button>
-        }
-      />
+    <div className="space-y-6">
+      {/* Header */}
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+        <div>
+          <h1 className="text-xl font-black text-slate-900 dark:text-white tracking-tight flex items-center gap-2">
+            <DollarSign className="w-6 h-6 text-emerald-500" /> Registro e Auditoria de Vendas
+          </h1>
+          <p className="text-xs text-slate-500 dark:text-zinc-400 mt-0.5">
+            Acompanhe a receita gerada, faturamento por revendedor e ticket médio de conversão.
+          </p>
+        </div>
 
-      {/* Cards de Métricas de Vendas */}
+        <div className="flex items-center gap-2">
+          <button
+            onClick={loadData}
+            disabled={loading}
+            className="p-2 text-xs font-semibold rounded-xl border border-brand-lightBorder dark:border-brand-darkBorder bg-white dark:bg-brand-darkCard text-slate-700 dark:text-zinc-300 shadow-sm"
+          >
+            <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
+          </button>
+          <button
+            onClick={handleExportCSV}
+            className="px-3.5 py-2 text-xs font-bold rounded-xl border border-brand-lightBorder dark:border-brand-darkBorder bg-white dark:bg-brand-darkCard hover:bg-slate-50 text-slate-700 dark:text-zinc-300 flex items-center gap-1.5 shadow-sm"
+          >
+            <Download className="w-3.5 h-3.5 text-emerald-500" /> Exportar Vendas
+          </button>
+          <button
+            onClick={() => setShowCreateModal(true)}
+            className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold flex items-center gap-2 shadow-sm"
+          >
+            <Plus className="w-4 h-4" /> Registrar Venda
+          </button>
+        </div>
+      </div>
+
+      {/* KPI Cards */}
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
         <MetricCard
-          title="Total de Vendas"
-          value={filteredSales.length}
-          subtitle="Conversões concluídas"
-          icon={CheckCircle2}
-          accentColor="text-emerald-400"
-          loading={loading}
-        />
-        <MetricCard
-          title="Volume Financeiro"
-          value={`R$ ${totalValue.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`}
-          subtitle="Faturamento apurado"
-          icon={DollarSign}
-          accentColor="text-emerald-400"
-          loading={loading}
+          title="Faturamento do Período"
+          value={`R$ ${totalRevenue.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
+          subtitle={`${totalCount} transações aprovadas`}
+          icon={<DollarSign className="w-5 h-5" />}
+          variant="success"
         />
         <MetricCard
           title="Ticket Médio"
-          value={`R$ ${averageTicket}`}
-          subtitle="Média por conversão"
-          icon={TrendingUp}
-          accentColor="text-brand-red"
-          loading={loading}
+          value={`R$ ${avgTicket.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
+          subtitle="Valor médio por assinatura"
+          icon={<TrendingUp className="w-5 h-5" />}
+          variant="default"
+        />
+        <MetricCard
+          title="Vendas Registradas"
+          value={totalCount}
+          subtitle="Total de assinaturas convertidas"
+          icon={<CreditCard className="w-5 h-5" />}
+          variant="default"
         />
       </div>
 
-      {/* Barra de Filtros */}
-      <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-4 bg-[#121212] p-4 rounded-2xl border border-zinc-800">
-        <div className="flex items-center gap-2 flex-wrap">
-          {/* Período */}
-          <div className="flex items-center gap-1 p-1 rounded-xl bg-zinc-900 border border-zinc-800 text-xs font-bold">
-            {[
-              { id: 'all', label: 'Todo o Período' },
-              { id: 'month', label: 'Este Mês' },
-              { id: '30days', label: 'Últimos 30 Dias' },
-              { id: 'week', label: 'Últimos 7 Dias' },
-            ].map((p) => (
-              <button
-                key={p.id}
-                onClick={() => setPeriodFilter(p.id as any)}
-                className={`px-3 py-1.5 rounded-lg transition whitespace-nowrap ${
-                  periodFilter === p.id
-                    ? 'bg-brand-red text-white shadow-sm'
-                    : 'text-zinc-400 hover:text-white'
-                }`}
-              >
-                {p.label}
-              </button>
-            ))}
+      {/* Filter and Search Bar */}
+      <div className="bg-white dark:bg-brand-darkCard border border-brand-lightBorder dark:border-brand-darkBorder p-4 rounded-2xl flex flex-col md:flex-row items-center justify-between gap-4 shadow-sm">
+        <div className="relative w-full md:w-80">
+          <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+          <input
+            type="text"
+            placeholder="Buscar por revendedor, cliente ou plano..."
+            value={searchTerm}
+            onChange={(e) => setSearchTerm(e.target.value)}
+            className="w-full pl-9 pr-3 py-2 text-xs rounded-xl border border-brand-lightBorder dark:border-brand-darkBorder bg-slate-50 dark:bg-brand-dark outline-none focus:ring-2 focus:ring-brand-red"
+          />
+        </div>
+
+        <div className="flex flex-wrap items-center gap-2 w-full md:w-auto">
+          <div className="flex items-center gap-1 bg-slate-100 dark:bg-brand-dark p-1 rounded-xl text-xs font-bold">
+            <button
+              onClick={() => setDateFilter('all')}
+              className={`px-3 py-1.5 rounded-lg transition ${dateFilter === 'all' ? 'bg-white dark:bg-brand-darkCard text-slate-900 dark:text-white shadow-xs' : 'text-slate-500'}`}
+            >
+              Tudo
+            </button>
+            <button
+              onClick={() => setDateFilter('7d')}
+              className={`px-3 py-1.5 rounded-lg transition ${dateFilter === '7d' ? 'bg-white dark:bg-brand-darkCard text-slate-900 dark:text-white shadow-xs' : 'text-slate-500'}`}
+            >
+              Últimos 7 dias
+            </button>
+            <button
+              onClick={() => setDateFilter('30d')}
+              className={`px-3 py-1.5 rounded-lg transition ${dateFilter === '30d' ? 'bg-white dark:bg-brand-darkCard text-slate-900 dark:text-white shadow-xs' : 'text-slate-500'}`}
+            >
+              Últimos 30 dias
+            </button>
+            <button
+              onClick={() => setDateFilter('this_month')}
+              className={`px-3 py-1.5 rounded-lg transition ${dateFilter === 'this_month' ? 'bg-white dark:bg-brand-darkCard text-slate-900 dark:text-white shadow-xs' : 'text-slate-500'}`}
+            >
+              Este Mês
+            </button>
           </div>
 
-          {/* Revendedor */}
           <select
             value={resellerFilter}
             onChange={(e) => setResellerFilter(e.target.value)}
-            className="rounded-xl border border-zinc-800 bg-zinc-900 px-3 py-2 text-xs text-white focus:border-brand-red focus:outline-none"
+            className="text-xs p-2 rounded-xl border border-brand-lightBorder dark:border-brand-darkBorder bg-slate-50 dark:bg-brand-dark font-bold text-slate-700 dark:text-zinc-300 outline-none"
           >
             <option value="all">Todos os Revendedores</option>
             {resellers.map((r) => (
               <option key={r.id} value={r.id}>
-                {r.nome}
+                {r.nome_completo || r.email}
               </option>
             ))}
           </select>
         </div>
-
-        {/* Busca */}
-        <div className="relative w-full sm:w-64">
-          <Search className="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-zinc-500" />
-          <input
-            type="text"
-            placeholder="Buscar por cliente, revendedor..."
-            value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
-            className="w-full rounded-xl border border-zinc-800 bg-zinc-900 pl-10 pr-4 py-2 text-xs text-white placeholder-zinc-500 focus:border-brand-red focus:outline-none"
-          />
-        </div>
       </div>
 
-      {/* Tabela de Vendas */}
-      <div className="rounded-2xl border border-zinc-800 bg-[#121212] overflow-hidden shadow-sm">
+      {/* Sales Table */}
+      <div className="bg-white dark:bg-brand-darkCard border border-brand-lightBorder dark:border-brand-darkBorder rounded-2xl overflow-hidden shadow-sm">
         <div className="overflow-x-auto">
-          <table className="w-full text-left text-xs">
+          <table className="w-full text-left border-collapse">
             <thead>
-              <tr className="border-b border-zinc-800 bg-zinc-900/50 text-zinc-400 uppercase text-[11px] select-none">
-                <th className="py-3.5 px-4 font-semibold">Revendedor</th>
-                <th className="py-3.5 px-4 font-semibold">Cliente Convertido</th>
-                <th className="py-3.5 px-4 font-semibold">Telefone</th>
-                <th className="py-3.5 px-4 font-semibold">Origem</th>
-                <th className="py-3.5 px-4 font-semibold">Valor</th>
-                <th className="py-3.5 px-4 font-semibold text-center">Status</th>
-                <th className="py-3.5 px-4 font-semibold text-right">Data/Hora</th>
+              <tr className="border-b border-brand-lightBorder dark:border-brand-darkBorder bg-slate-50/75 dark:bg-brand-dark/50 text-[11px] font-black uppercase text-slate-500 dark:text-zinc-400">
+                <th className="py-3 px-4">Data & Horário</th>
+                <th className="py-3 px-4">Revendedor</th>
+                <th className="py-3 px-4">Cliente / Lead</th>
+                <th className="py-3 px-4">Plano Vendido</th>
+                <th className="py-3 px-4">Método</th>
+                <th className="py-3 px-4 text-right">Valor</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-zinc-800/60">
-              {loading ? (
-                <tr>
-                  <td colSpan={7} className="py-12 text-center text-zinc-500">
-                    <Loader2 className="w-6 h-6 animate-spin text-brand-red mx-auto mb-2" />
-                    Carregando histórico de vendas...
+            <tbody className="divide-y divide-brand-lightBorder dark:divide-brand-darkBorder text-xs">
+              {filteredSales.map((s) => (
+                <tr key={s.id} className="hover:bg-slate-50/50 dark:hover:bg-brand-dark/40 transition">
+                  <td className="py-3.5 px-4 text-slate-500">
+                    <div className="flex items-center gap-1.5">
+                      <Calendar className="w-3.5 h-3.5 text-slate-400" />
+                      <span>{new Date(s.created_at).toLocaleString('pt-BR')}</span>
+                    </div>
+                  </td>
+                  <td className="py-3.5 px-4 font-bold text-slate-900 dark:text-white">
+                    {s.profiles?.nome_completo || s.profiles?.email || 'Desconhecido'}
+                  </td>
+                  <td className="py-3.5 px-4">
+                    {s.contacts ? (
+                      <div>
+                        <p className="font-bold text-slate-800 dark:text-zinc-200">{s.contacts.nome}</p>
+                        <p className="text-[10px] text-slate-400 font-mono">{s.contacts.telefone}</p>
+                      </div>
+                    ) : (
+                      <span className="text-slate-400 italic">Venda Direta / Balcão</span>
+                    )}
+                  </td>
+                  <td className="py-3.5 px-4">
+                    <span className="px-2 py-0.5 rounded-md bg-slate-100 dark:bg-brand-dark text-[11px] font-semibold">
+                      {s.plano || 'Mensal'}
+                    </span>
+                  </td>
+                  <td className="py-3.5 px-4 uppercase text-[10px] font-bold text-slate-500">
+                    {s.metodo_pagamento || 'PIX'}
+                  </td>
+                  <td className="py-3.5 px-4 text-right font-black text-emerald-600 dark:text-emerald-400 text-sm">
+                    R$ {Number(s.valor || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
                   </td>
                 </tr>
-              ) : filteredSales.length === 0 ? (
-                <tr>
-                  <td colSpan={7} className="py-12 text-center text-zinc-500">
-                    Nenhuma venda encontrada para o filtro selecionado.
-                  </td>
-                </tr>
-              ) : (
-                filteredSales.map((sale) => (
-                  <tr key={sale.id} className="hover:bg-zinc-900/40 transition">
-                    <td className="py-3.5 px-4 font-bold text-brand-red">
-                      {sale.profiles?.nome || 'Revendedor'}
-                    </td>
-                    <td className="py-3.5 px-4 font-semibold text-white">
-                      {sale.contacts?.nome || 'Cliente'}
-                    </td>
-                    <td className="py-3.5 px-4 text-zinc-400 font-mono text-[11px]">
-                      {sale.contacts?.telefone || '-'}
-                    </td>
-                    <td className="py-3.5 px-4">
-                      <span className="rounded-md bg-zinc-800 px-2 py-0.5 text-[10px] font-semibold text-zinc-400">
-                        {sale.origem || sale.contacts?.origem || 'WhatsApp'}
-                      </span>
-                    </td>
-                    <td className="py-3.5 px-4 font-black text-emerald-400">
-                      {sale.valor > 0 ? `R$ ${Number(sale.valor).toFixed(2)}` : 'Concluída'}
-                    </td>
-                    <td className="py-3.5 px-4 text-center">
-                      <StatusBadge type="sale" value={sale.status} />
-                    </td>
-                    <td className="py-3.5 px-4 text-right text-zinc-500 font-medium">
-                      {new Date(sale.created_at).toLocaleString('pt-BR')}
-                    </td>
-                  </tr>
-                ))
-              )}
+              ))}
             </tbody>
           </table>
         </div>
+
+        {filteredSales.length === 0 && (
+          <EmptyState
+            icon={<DollarSign className="w-8 h-8 text-slate-400" />}
+            title="Nenhuma venda encontrada"
+            description="Nenhuma transação foi registrada no período selecionado."
+            actionLabel="Registrar Venda Manual"
+            onAction={() => setShowCreateModal(true)}
+          />
+        )}
       </div>
 
-      {/* Modal de Registro Manual de Venda */}
-      {isRegisterModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-in fade-in duration-150">
-          <div className="relative w-full max-w-md rounded-2xl border border-zinc-800 bg-[#121212] p-6 shadow-2xl">
-            <button
-              onClick={() => setIsRegisterModalOpen(false)}
-              className="absolute right-4 top-4 rounded-lg p-1.5 text-zinc-400 hover:bg-zinc-800 hover:text-white"
-            >
-              <X className="w-4 h-4" />
-            </button>
+      {/* Create Sale Modal */}
+      {showCreateModal && (
+        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white dark:bg-brand-darkCard border border-brand-lightBorder dark:border-brand-darkBorder rounded-2xl w-full max-w-md p-6 shadow-2xl animate-in fade-in zoom-in duration-200">
+            <div className="flex items-center justify-between pb-3 border-b border-brand-lightBorder dark:border-brand-darkBorder">
+              <h3 className="text-base font-bold text-slate-900 dark:text-white flex items-center gap-2">
+                <Plus className="w-5 h-5 text-emerald-500" /> Registrar Nova Venda
+              </h3>
+              <button onClick={() => setShowCreateModal(false)} className="p-1 rounded-lg text-slate-400">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
 
-            <h3 className="text-base font-bold text-white mb-1 flex items-center gap-2">
-              <ShoppingBag className="w-4 h-4 text-emerald-500" /> Registrar Venda Concluída
-            </h3>
-            <p className="text-xs text-zinc-400 mb-5">
-              Audite e registre manualmente uma venda convertida.
-            </p>
-
-            <form onSubmit={handleRegisterSale} className="space-y-3.5 text-xs">
+            <form onSubmit={handleCreateSale} className="space-y-4 mt-4 text-xs">
               <div>
-                <label className="block font-bold text-zinc-300 mb-1">Revendedor Responsável:</label>
+                <label className="block font-bold text-slate-700 dark:text-zinc-300 mb-1">
+                  Revendedor Responsável
+                </label>
                 <select
                   required
-                  value={selectedUserId}
-                  onChange={(e) => setSelectedUserId(e.target.value)}
-                  className="w-full rounded-xl border border-zinc-800 bg-zinc-900 p-2.5 text-white focus:border-brand-red focus:outline-none"
+                  value={newSaleData.user_id}
+                  onChange={(e) => setNewSaleData({ ...newSaleData, user_id: e.target.value })}
+                  className="w-full p-2.5 rounded-xl border border-brand-lightBorder dark:border-brand-darkBorder bg-slate-50 dark:bg-brand-dark outline-none focus:ring-2 focus:ring-brand-red font-bold"
                 >
                   <option value="">Selecione o revendedor...</option>
                   {resellers.map((r) => (
                     <option key={r.id} value={r.id}>
-                      {r.nome} ({r.email})
+                      {r.nome_completo || r.email}
                     </option>
                   ))}
                 </select>
               </div>
 
               <div>
-                <label className="block font-bold text-zinc-300 mb-1">Cliente / Lead:</label>
+                <label className="block font-bold text-slate-700 dark:text-zinc-300 mb-1">
+                  Cliente / Lead (Opcional)
+                </label>
                 <select
-                  required
-                  value={selectedContactId}
-                  onChange={(e) => setSelectedContactId(e.target.value)}
-                  className="w-full rounded-xl border border-zinc-800 bg-zinc-900 p-2.5 text-white focus:border-brand-red focus:outline-none"
+                  value={newSaleData.contact_id}
+                  onChange={(e) => setNewSaleData({ ...newSaleData, contact_id: e.target.value })}
+                  className="w-full p-2.5 rounded-xl border border-brand-lightBorder dark:border-brand-darkBorder bg-slate-50 dark:bg-brand-dark outline-none focus:ring-2 focus:ring-brand-red"
                 >
-                  <option value="">Selecione o lead da base...</option>
+                  <option value="">Nenhum (Venda Avulsa)</option>
                   {contacts.map((c) => (
                     <option key={c.id} value={c.id}>
-                      {c.nome} - {c.telefone}
+                      {c.nome} ({c.telefone})
                     </option>
                   ))}
                 </select>
@@ -374,55 +423,64 @@ export const SalesView: React.FC = () => {
 
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="block font-bold text-zinc-300 mb-1">Valor da Venda (R$):</label>
+                  <label className="block font-bold text-slate-700 dark:text-zinc-300 mb-1">
+                    Valor (R$)
+                  </label>
                   <input
-                    type="number"
-                    step="0.01"
+                    type="text"
+                    required
                     placeholder="35.00"
-                    value={saleValue}
-                    onChange={(e) => setSaleValue(e.target.value)}
-                    className="w-full rounded-xl border border-zinc-800 bg-zinc-900 p-2.5 text-white focus:border-brand-red focus:outline-none"
+                    value={newSaleData.valor}
+                    onChange={(e) => setNewSaleData({ ...newSaleData, valor: e.target.value })}
+                    className="w-full p-2.5 rounded-xl border border-brand-lightBorder dark:border-brand-darkBorder bg-slate-50 dark:bg-brand-dark outline-none focus:ring-2 focus:ring-brand-red font-bold"
                   />
                 </div>
+
                 <div>
-                  <label className="block font-bold text-zinc-300 mb-1">Origem:</label>
+                  <label className="block font-bold text-slate-700 dark:text-zinc-300 mb-1">
+                    Método
+                  </label>
                   <select
-                    value={saleOrigin}
-                    onChange={(e) => setSaleOrigin(e.target.value)}
-                    className="w-full rounded-xl border border-zinc-800 bg-zinc-900 p-2.5 text-white focus:border-brand-red focus:outline-none"
+                    value={newSaleData.metodo_pagamento}
+                    onChange={(e) => setNewSaleData({ ...newSaleData, metodo_pagamento: e.target.value })}
+                    className="w-full p-2.5 rounded-xl border border-brand-lightBorder dark:border-brand-darkBorder bg-slate-50 dark:bg-brand-dark outline-none focus:ring-2 focus:ring-brand-red font-bold"
                   >
-                    <option value="WhatsApp">WhatsApp</option>
-                    <option value="Instagram">Instagram</option>
-                    <option value="Facebook">Facebook</option>
-                    <option value="Indicação">Indicação</option>
+                    <option value="pix">PIX</option>
+                    <option value="cartao">Cartão de Crédito</option>
+                    <option value="boleto">Boleto</option>
+                    <option value="dinheiro">Dinheiro</option>
                   </select>
                 </div>
               </div>
 
               <div>
-                <label className="block font-bold text-zinc-300 mb-1">Observações (Opcional):</label>
-                <textarea
-                  rows={2}
-                  value={saleObs}
-                  onChange={(e) => setSaleObs(e.target.value)}
-                  placeholder="Ex: Plano trimestral com tela extra"
-                  className="w-full rounded-xl border border-zinc-800 bg-zinc-900 p-2.5 text-white focus:border-brand-red focus:outline-none"
+                <label className="block font-bold text-slate-700 dark:text-zinc-300 mb-1">
+                  Plano / Pacote
+                </label>
+                <input
+                  type="text"
+                  required
+                  placeholder="Ex: Mensal Padrão / Trimestral VIP"
+                  value={newSaleData.plano}
+                  onChange={(e) => setNewSaleData({ ...newSaleData, plano: e.target.value })}
+                  className="w-full p-2.5 rounded-xl border border-brand-lightBorder dark:border-brand-darkBorder bg-slate-50 dark:bg-brand-dark outline-none focus:ring-2 focus:ring-brand-red"
                 />
               </div>
 
-              <div className="pt-2">
+              <div className="flex justify-end gap-2 pt-3 border-t border-brand-lightBorder dark:border-brand-darkBorder">
+                <button
+                  type="button"
+                  onClick={() => setShowCreateModal(false)}
+                  className="px-4 py-2 rounded-xl border border-brand-lightBorder dark:border-brand-darkBorder text-slate-600 dark:text-zinc-300 font-bold"
+                >
+                  Cancelar
+                </button>
                 <button
                   type="submit"
-                  disabled={isSubmitting}
-                  className="w-full rounded-xl bg-emerald-600 hover:bg-emerald-500 py-3 font-bold text-white shadow-lg shadow-emerald-600/20 transition flex items-center justify-center gap-2 disabled:opacity-50"
+                  disabled={saving}
+                  className="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold disabled:opacity-50"
                 >
-                  {isSubmitting ? (
-                    <>
-                      <Loader2 className="w-4 h-4 animate-spin" /> Registrando...
-                    </>
-                  ) : (
-                    'Salvar Registro de Venda'
-                  )}
+                  {saving ? 'Registrando...' : 'Confirmar Venda'}
                 </button>
               </div>
             </form>

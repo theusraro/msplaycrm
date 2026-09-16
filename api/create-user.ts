@@ -1,76 +1,74 @@
+import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { createClient } from '@supabase/supabase-js';
 
-interface ApiRequest {
-  method?: string;
-  headers: Record<string, string | string[] | undefined>;
-  body: any;
-}
+export default async function handler(req: VercelRequest, res: VercelResponse) {
+  if (req.method !== 'POST') return res.status(405).json({ error: 'M√©todo n√£o permitido' });
 
-interface ApiResponse {
-  status: (code: number) => ApiResponse;
-  json: (data: any) => void;
-}
+  const supabaseUrl = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL || '';
+  const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.VITE_SUPABASE_ANON_KEY || '';
 
-export default async function handler(req: ApiRequest, res: ApiResponse) {
-  if (req.method !== 'POST') return res.status(405).json({ error: 'MÈtodo n„o permitido' });
-
-  const authHeader = req.headers.authorization;
-  if (!authHeader) return res.status(401).json({ error: 'N„o autorizado' });
-
-  const supabaseUrl = process.env.VITE_SUPABASE_URL || '';
-  const supabaseAnonKey = process.env.VITE_SUPABASE_ANON_KEY || '';
-  const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || supabaseAnonKey;
-
-  const supabaseUserClient = createClient(supabaseUrl, supabaseAnonKey);
-  const token = typeof authHeader === 'string' ? authHeader.replace('Bearer ', '') : '';
-  const { data: { user }, error: authError } = await supabaseUserClient.auth.getUser(token);
-
-  if (authError || !user) return res.status(401).json({ error: 'Sess„o inv·lida' });
-
-  // Verificar se o usu·rio autenticado È admin
-  const { data: profile, error: profileErr } = await supabaseUserClient
-    .from('profiles')
-    .select('role, ativo')
-    .eq('id', user.id)
-    .single();
-
-  if (profileErr || !profile || profile.role !== 'admin' || !profile.ativo) {
-    return res.status(403).json({ error: 'Acesso negado: apenas administradores podem criar usu·rios' });
+  if (!supabaseUrl || !serviceRoleKey) {
+    return res.status(500).json({ error: 'Supabase credentials not configured on server' });
   }
 
-  const { email, password, nome, role = 'user', whatsapp = '' } = req.body || {};
-
-  if (!email || !password || !nome) {
-    return res.status(400).json({ error: 'Campos obrigatÛrios: email, password, nome' });
-  }
-
-  const supabaseAdmin = createClient(supabaseUrl, supabaseServiceKey, {
-    auth: { autoRefreshToken: false, persistSession: false }
+  const supabaseAdmin = createClient(supabaseUrl, serviceRoleKey, {
+    auth: {
+      autoRefreshToken: false,
+      persistSession: false
+    }
   });
 
-  const { data: newUser, error: createError } = await supabaseAdmin.auth.admin.createUser({
-    email,
-    password,
-    email_confirm: true,
-    user_metadata: { nome, role, whatsapp }
-  });
+  const { email, password, nome_completo, telefone, lead_quota = 20, role = 'reseller' } = req.body;
 
-  if (createError) {
-    return res.status(400).json({ error: createError.message });
+  if (!email || !password) {
+    return res.status(400).json({ error: 'Email e senha s√£o obrigat√≥rios' });
   }
 
-  if (newUser.user) {
-    // Garantir registro no profiles
-    await supabaseAdmin.from('profiles').upsert({
-      id: newUser.user.id,
+  try {
+    // 1. Create auth user with service role
+    const { data: userData, error: authError } = await supabaseAdmin.auth.admin.createUser({
       email,
-      nome,
-      role,
-      ativo: true,
-      whatsapp: whatsapp || null
+      password,
+      email_confirm: true,
+      user_metadata: {
+        nome_completo,
+        telefone,
+        role
+      }
     });
+
+    if (authError) {
+      return res.status(400).json({ error: authError.message });
+    }
+
+    const userId = userData.user.id;
+
+    // 2. Upsert profile
+    const { error: profileError } = await supabaseAdmin.from('profiles').upsert({
+      id: userId,
+      email,
+      nome_completo,
+      telefone,
+      role,
+      status: 'active',
+      lead_quota: Number(lead_quota) || 20,
+      ativo: true,
+      updated_at: new Date().toISOString()
+    });
+
+    if (profileError) {
+      return res.status(400).json({ error: profileError.message });
+    }
+
+    return res.status(200).json({
+      success: true,
+      user: {
+        id: userId,
+        email,
+        nome_completo
+      }
+    });
+  } catch (err: any) {
+    return res.status(500).json({ error: err.message || 'Erro interno ao criar usu√°rio' });
   }
-
-  return res.status(200).json({ success: true, user: { id: newUser.user?.id, email, nome, role } });
 }
-
