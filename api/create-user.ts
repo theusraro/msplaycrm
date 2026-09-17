@@ -31,9 +31,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       password,
       email_confirm: true,
       user_metadata: {
+        nome: nome_completo,
         nome_completo,
         telefone,
-        role
+        whatsapp: telefone,
+        role: role === 'admin' ? 'reseller' : role // Security: avoid admin creation via public endpoint
       }
     });
 
@@ -43,14 +45,17 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     const userId = userData.user.id;
 
-    // 2. Upsert profile
+    // 2. Upsert profile with full field compatibility
     const { error: profileError } = await supabaseAdmin.from('profiles').upsert({
       id: userId,
       email,
+      nome: nome_completo,
       nome_completo,
       telefone,
-      role,
+      whatsapp: telefone,
+      role: role === 'admin' ? 'reseller' : role,
       status: 'active',
+      status_admin: 'ativo',
       lead_quota: Number(lead_quota) || 20,
       ativo: true,
       updated_at: new Date().toISOString()

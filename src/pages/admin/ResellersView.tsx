@@ -115,14 +115,15 @@ export const ResellersView: React.FC = () => {
       });
 
       if (!response.ok) {
-        // Fallback: direct signup if API route is local dev
         const { data: authData, error: authErr } = await supabase.auth.signUp({
           email: newResellerData.email,
           password: newResellerData.password,
           options: {
             data: {
+              nome: newResellerData.nome_completo,
               nome_completo: newResellerData.nome_completo,
               telefone: newResellerData.telefone,
+              whatsapp: newResellerData.telefone,
               role: 'reseller'
             }
           }
@@ -133,10 +134,13 @@ export const ResellersView: React.FC = () => {
           await supabase.from('profiles').upsert({
             id: authData.user.id,
             email: newResellerData.email,
+            nome: newResellerData.nome_completo,
             nome_completo: newResellerData.nome_completo,
             telefone: newResellerData.telefone,
+            whatsapp: newResellerData.telefone,
             role: 'reseller',
             status: 'active',
+            status_admin: 'ativo',
             lead_quota: Number(newResellerData.lead_quota) || 20,
             ativo: true
           });
