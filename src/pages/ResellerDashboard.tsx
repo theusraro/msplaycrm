@@ -14,7 +14,6 @@ export const ResellerDashboard: React.FC = () => {
   const [statusFilter, setStatusFilter] = useState<'novo' | 'pendente' | 'concluido'>('novo');
 
   const [messageType, setMessageType] = useState('venda_direta');
-  const [provider, setProvider] = useState<string>('groq');
   const [customInstructions, setCustomInstructions] = useState('');
   const [resellerPhone, setResellerPhone] = useState(localStorage.getItem('msplay_reseller_phone') || '');
   const [generatedMessage, setGeneratedMessage] = useState('');
@@ -68,7 +67,6 @@ export const ResellerDashboard: React.FC = () => {
           contactPhone: selectedContact.telefone,
           contactNotes: selectedContact.observacoes,
           messageType,
-          provider,
           customInstructions,
           resellerPhone
         })
@@ -221,16 +219,8 @@ export const ResellerDashboard: React.FC = () => {
 
           {/* Gerador de IA */}
           <div className="lg:col-span-7 border border-brand-lightBorder dark:border-brand-darkBorder bg-white dark:bg-brand-darkCard rounded-2xl p-6 shadow-sm">
-            <div className="flex justify-between border-b border-brand-lightBorder dark:border-brand-darkBorder pb-4 mb-4">
+            <div className="flex justify-between items-center border-b border-brand-lightBorder dark:border-brand-darkBorder pb-4 mb-4">
               <h2 className="text-base font-bold flex gap-2 items-center"><Sparkles className="w-5 h-5 text-brand-red" /> Gerador de Abordagem IA</h2>
-              <select value={provider} onChange={(e) => setProvider(e.target.value)} className="text-xs p-1.5 rounded-lg border border-brand-lightBorder dark:border-brand-darkBorder bg-slate-50 dark:bg-brand-dark font-bold">
-                <option value="groq">Groq Llama 3</option>
-                <option value="gemini">Google Gemini</option>
-                <option value="claude">Anthropic Claude</option>
-                <option value="nvidia">NVIDIA Llama 70B</option>
-                <option value="openrouter">OpenRouter</option>
-                <option value="custom">IA Personalizada</option>
-              </select>
             </div>
             
             {errorMsg && <div className="mb-4 p-3 rounded-xl bg-red-50 border border-red-200 text-xs text-red-600 flex gap-2"><AlertCircle className="w-4 h-4 shrink-0" />{errorMsg}</div>}

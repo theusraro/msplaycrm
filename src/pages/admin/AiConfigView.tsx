@@ -1,12 +1,12 @@
 import React, { useState, useEffect } from 'react';
 import { supabase } from '../../lib/supabase';
+import { useAuth } from '../../contexts/AuthContext';
 import { useToast } from '../../contexts/ToastContext';
 import { logAuditEvent } from '../../services/auditService';
 import {
   Sparkles,
   Bot,
   Sliders,
-  Send,
   Save,
   CheckCircle2,
   Cpu,
@@ -14,7 +14,8 @@ import {
   Flame,
   MessageSquareCode,
   ShieldCheck,
-  Zap
+  Zap,
+  Lock
 } from 'lucide-react';
 
 interface AiConfigState {
@@ -36,12 +37,12 @@ interface AiConfigState {
 }
 
 const DEFAULT_CONFIG: AiConfigState = {
-  defaultProvider: 'groq',
-  groqModel: 'llama-3.1-70b-versatile',
+  defaultProvider: 'gemini',
+  groqModel: 'llama-3.3-70b-versatile',
   geminiModel: 'gemini-1.5-flash',
   claudeModel: 'claude-3-5-sonnet-20240620',
-  nvidiaModel: 'meta/llama3-70b-instruct',
-  openrouterModel: 'auto',
+  nvidiaModel: 'meta/llama-3.1-70b-instruct',
+  openrouterModel: 'meta-llama/llama-3.3-70b-instruct:free',
   customEndpointUrl: '',
   temperature: 0.7,
   maxTokens: 500,
@@ -58,8 +59,18 @@ const DEFAULT_CONFIG: AiConfigState = {
 };
 
 export const AiConfigView: React.FC = () => {
+  const { session } = useAuth();
   const { addToast } = useToast();
   const [config, setConfig] = useState<AiConfigState>(DEFAULT_CONFIG);
+  const [apiKeys, setApiKeys] = useState<{ [key: string]: string }>({
+    gemini: '',
+    groq: '',
+    claude: '',
+    nvidia: '',
+    openrouter: '',
+    custom: ''
+  });
+  const [configuredKeys, setConfiguredKeys] = useState<{ [key: string]: boolean }>({});
   const [activeTab, setActiveTab] = useState<'providers' | 'prompts' | 'playground'>('providers');
   const [saving, setSaving] = useState(false);
 
@@ -70,24 +81,57 @@ export const AiConfigView: React.FC = () => {
   const [testNotes, setTestNotes] = useState('Usuária de TV Samsung, gosta de canais de futebol.');
   const [playgroundOutput, setPlaygroundOutput] = useState('');
   const [testing, setTesting] = useState(false);
+  const [playgroundMeta, setPlaygroundMeta] = useState<{ provider?: string; model?: string }>({});
 
   const loadConfig = async () => {
     try {
-      const { data } = await supabase
+      // 1. Carregar configurações de api_settings
+      const { data: dbApiSettings } = await supabase.from('api_settings').select('*');
+      const keyStatus: { [key: string]: boolean } = {};
+      let activeProvider = DEFAULT_CONFIG.defaultProvider;
+      let loadedGeminiModel = DEFAULT_CONFIG.geminiModel;
+      let loadedGroqModel = DEFAULT_CONFIG.groqModel;
+      let loadedClaudeModel = DEFAULT_CONFIG.claudeModel;
+      let loadedNvidiaModel = DEFAULT_CONFIG.nvidiaModel;
+      let loadedOpenrouterModel = DEFAULT_CONFIG.openrouterModel;
+      let loadedCustomUrl = DEFAULT_CONFIG.customEndpointUrl;
+
+      if (dbApiSettings && dbApiSettings.length > 0) {
+        dbApiSettings.forEach((item: any) => {
+          if (item.api_key) keyStatus[item.provider] = true;
+          if (item.ativo) activeProvider = item.provider;
+          if (item.provider === 'gemini' && item.default_model) loadedGeminiModel = item.default_model;
+          if (item.provider === 'groq' && item.default_model) loadedGroqModel = item.default_model;
+          if (item.provider === 'claude' && item.default_model) loadedClaudeModel = item.default_model;
+          if (item.provider === 'nvidia' && item.default_model) loadedNvidiaModel = item.default_model;
+          if (item.provider === 'openrouter' && item.default_model) loadedOpenrouterModel = item.default_model;
+          if (item.provider === 'custom' && item.base_url) loadedCustomUrl = item.base_url;
+        });
+      }
+      setConfiguredKeys(keyStatus);
+
+      // 2. Carregar prompts e parâmetros do system_settings
+      const { data: sysData } = await supabase
         .from('system_settings')
         .select('*')
         .eq('key', 'ai_configuration')
-        .single();
+        .maybeSingle();
 
-      if (data?.value) {
-        setConfig({ ...DEFAULT_CONFIG, ...data.value });
-      } else {
-        const local = localStorage.getItem('msplay_ai_config');
-        if (local) setConfig(JSON.parse(local));
-      }
+      const mergedConfig = {
+        ...DEFAULT_CONFIG,
+        ...(sysData?.value || {}),
+        defaultProvider: activeProvider,
+        geminiModel: loadedGeminiModel,
+        groqModel: loadedGroqModel,
+        claudeModel: loadedClaudeModel,
+        nvidiaModel: loadedNvidiaModel,
+        openrouterModel: loadedOpenrouterModel,
+        customEndpointUrl: loadedCustomUrl
+      };
+
+      setConfig(mergedConfig);
     } catch (err) {
-      const local = localStorage.getItem('msplay_ai_config');
-      if (local) setConfig(JSON.parse(local));
+      console.error('Erro ao carregar configurações de IA:', err);
     }
   };
 
@@ -98,22 +142,55 @@ export const AiConfigView: React.FC = () => {
   const handleSaveConfig = async () => {
     setSaving(true);
     try {
-      localStorage.setItem('msplay_ai_config', JSON.stringify(config));
+      // 1. Respeitar o índice único parcial (ativo = true): desativar todos antes
+      await supabase.from('api_settings').update({ ativo: false }).neq('id', '00000000-0000-0000-0000-000000000000');
 
+      // 2. Salvar/Atualizar cada provedor em public.api_settings
+      const providersList = [
+        { provider: 'gemini', default_model: config.geminiModel, base_url: null, key: apiKeys.gemini },
+        { provider: 'groq', default_model: config.groqModel, base_url: null, key: apiKeys.groq },
+        { provider: 'claude', default_model: config.claudeModel, base_url: null, key: apiKeys.claude },
+        { provider: 'nvidia', default_model: config.nvidiaModel, base_url: null, key: apiKeys.nvidia },
+        { provider: 'openrouter', default_model: config.openrouterModel, base_url: null, key: apiKeys.openrouter },
+        { provider: 'custom', default_model: 'gpt-4o', base_url: config.customEndpointUrl, key: apiKeys.custom }
+      ];
+
+      for (const p of providersList) {
+        const isThisActive = p.provider === config.defaultProvider;
+        const updatePayload: any = {
+          provider: p.provider,
+          default_model: p.default_model,
+          base_url: p.base_url,
+          ativo: isThisActive,
+          updated_at: new Date().toISOString()
+        };
+        if (p.key && p.key.trim()) {
+          updatePayload.api_key = p.key.trim();
+        }
+
+        await supabase.from('api_settings').upsert(updatePayload, { onConflict: 'provider' });
+      }
+
+      // 3. Salvar prompts e parâmetros adicionais em system_settings
       await supabase.from('system_settings').upsert({
         key: 'ai_configuration',
         value: config,
         updated_at: new Date().toISOString()
       });
 
+      // 4. Registrar auditoria
       await logAuditEvent('update_ai_config', {
         provider: config.defaultProvider,
         temperature: config.temperature
       });
 
-      addToast('Configurações de IA salvas com sucesso!', 'success');
+      // Recarregar status de chaves e limpar inputs de chave temporários
+      setApiKeys({ gemini: '', groq: '', claude: '', nvidia: '', openrouter: '', custom: '' });
+      await loadConfig();
+
+      addToast('Configurações de IA salvas com sucesso no banco!', 'success');
     } catch (err: any) {
-      addToast(err.message || 'Salvo localmente com sucesso', 'success');
+      addToast('Erro ao salvar configurações: ' + (err.message || 'Erro desconhecido'), 'error');
     } finally {
       setSaving(false);
     }
@@ -122,16 +199,19 @@ export const AiConfigView: React.FC = () => {
   const handleRunPlaygroundTest = async () => {
     setTesting(true);
     setPlaygroundOutput('');
+    setPlaygroundMeta({});
     try {
       const response = await fetch('/api/generate', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${session?.access_token}`
+        },
         body: JSON.stringify({
           contactName: testName,
           contactPhone: testPhone,
           contactNotes: testNotes,
           messageType: testType,
-          provider: config.defaultProvider,
           customInstructions: config.prompts[testType],
           resellerPhone: '(32) 99999-9999'
         })
@@ -140,13 +220,11 @@ export const AiConfigView: React.FC = () => {
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || 'Erro na resposta do backend');
       setPlaygroundOutput(data.text);
-      addToast('Mensagem gerada com sucesso!', 'success');
+      setPlaygroundMeta({ provider: data.provider, model: data.model });
+      addToast(`Mensagem gerada com sucesso via ${data.provider?.toUpperCase()}!`, 'success');
     } catch (err: any) {
-      // Local simulated response if backend key not configured
-      setPlaygroundOutput(
-        `Olá ${testName}! ⚽ Tudo bem?\n\nVi que você adora futebol e possui TV Samsung! O MSPLAY tem os canais Première, SporTV e DAZN em 4K sem travamento!\n\nPosso liberar um teste grátis agora mesmo para você conferir na sua Smart TV? Me responda aqui! 🚀`
-      );
-      addToast('Simulação executada (Configure as chaves no backend para chamada real)', 'info');
+      setPlaygroundOutput(`Erro na chamada da IA: ${err.message}`);
+      addToast(err.message || 'Falha ao executar teste', 'error');
     } finally {
       setTesting(false);
     }
@@ -161,7 +239,7 @@ export const AiConfigView: React.FC = () => {
             <Sparkles className="w-6 h-6 text-brand-red" /> Configuração do Motor de Inteligência Artificial
           </h1>
           <p className="text-xs text-slate-500 dark:text-zinc-400 mt-0.5">
-            Gerencie múltiplos provedores (Groq, Gemini, Claude, Nvidia), temperatura e templates de abordagem de vendas.
+            Gerencie o provedor ativo centralizado (Groq, Gemini, Claude, NVIDIA, OpenRouter), chaves de API e prompts do sistema.
           </p>
         </div>
 
@@ -186,7 +264,7 @@ export const AiConfigView: React.FC = () => {
               : 'bg-slate-100 dark:bg-brand-darkCard text-slate-600 dark:text-zinc-400'
           }`}
         >
-          <Cpu className="w-4 h-4" /> Provedores & Modelos
+          <Cpu className="w-4 h-4" /> Provedores & Chaves de API
         </button>
         <button
           onClick={() => setActiveTab('prompts')}
@@ -215,94 +293,194 @@ export const AiConfigView: React.FC = () => {
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
           <div className="lg:col-span-7 bg-white dark:bg-brand-darkCard border border-brand-lightBorder dark:border-brand-darkBorder rounded-2xl p-6 shadow-sm space-y-5">
             <h3 className="text-sm font-black uppercase tracking-wider text-slate-900 dark:text-white flex items-center gap-2">
-              <Bot className="w-4 h-4 text-brand-red" /> Seleção de Provedores Padrão
+              <Bot className="w-4 h-4 text-brand-red" /> Provedor de IA Ativo no Sistema
             </h3>
 
-            <div>
-              <label className="block text-xs font-bold text-slate-700 dark:text-zinc-300 mb-1">
-                Provedor de IA Padrão do Sistema
+            <div className="p-4 rounded-xl bg-slate-50 dark:bg-brand-dark border border-brand-lightBorder dark:border-brand-darkBorder">
+              <label className="block text-xs font-bold text-slate-700 dark:text-zinc-300 mb-1.5">
+                Provedor Ativo Oficial (Utilizado por todos os Revendedores)
               </label>
               <select
                 value={config.defaultProvider}
                 onChange={(e) => setConfig({ ...config, defaultProvider: e.target.value })}
-                className="w-full p-2.5 rounded-xl border border-brand-lightBorder dark:border-brand-darkBorder bg-slate-50 dark:bg-brand-dark font-bold text-xs outline-none focus:ring-2 focus:ring-brand-red"
+                className="w-full p-2.5 rounded-xl border border-brand-lightBorder dark:border-brand-darkBorder bg-white dark:bg-brand-darkCard font-bold text-xs outline-none focus:ring-2 focus:ring-brand-red"
               >
-                <option value="groq">⚡ Groq Cloud (Ultra Rápido - Llama 3 70B)</option>
-                <option value="gemini">✨ Google Gemini 1.5 Flash / Pro</option>
+                <option value="gemini">✨ Google Gemini (Recomendado / Flash / Pro)</option>
+                <option value="groq">⚡ Groq Cloud (Ultra Rápido - Llama 3.3 70B)</option>
                 <option value="claude">🧠 Anthropic Claude 3.5 Sonnet</option>
-                <option value="nvidia">🚀 NVIDIA NIM (Llama 3 70B Instruct)</option>
+                <option value="nvidia">🚀 NVIDIA NIM (Llama 3.1 70B Instruct)</option>
                 <option value="openrouter">🌐 OpenRouter API Gateway</option>
                 <option value="custom">🔌 Servidor Próprio / Endpoint OpenAI Compatível</option>
               </select>
+              <p className="text-[11px] text-slate-500 dark:text-zinc-400 mt-2">
+                O revendedor <b>não</b> possui permissão para trocar o provedor. Todas as abordagens geradas no sistema utilizarão este motor.
+              </p>
             </div>
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-xs pt-2">
-              <div>
-                <label className="block font-bold text-slate-700 dark:text-zinc-300 mb-1">
-                  Modelo Groq
-                </label>
-                <input
-                  type="text"
-                  value={config.groqModel}
-                  onChange={(e) => setConfig({ ...config, groqModel: e.target.value })}
-                  className="w-full p-2 rounded-xl border border-brand-lightBorder dark:border-brand-darkBorder bg-slate-50 dark:bg-brand-dark outline-none font-mono text-[11px]"
-                />
-              </div>
+            <h4 className="text-xs font-black uppercase tracking-wider text-slate-700 dark:text-zinc-300 pt-2 flex items-center gap-1.5">
+              <Key className="w-3.5 h-3.5 text-brand-red" /> Modelos e Chaves por Provedor
+            </h4>
 
-              <div>
-                <label className="block font-bold text-slate-700 dark:text-zinc-300 mb-1">
-                  Modelo Google Gemini
-                </label>
-                <input
-                  type="text"
-                  value={config.geminiModel}
-                  onChange={(e) => setConfig({ ...config, geminiModel: e.target.value })}
-                  className="w-full p-2 rounded-xl border border-brand-lightBorder dark:border-brand-darkBorder bg-slate-50 dark:bg-brand-dark outline-none font-mono text-[11px]"
-                />
+            {/* Gemini */}
+            <div className={`p-3.5 rounded-xl border transition ${config.defaultProvider === 'gemini' ? 'border-brand-red bg-red-50/20 dark:bg-red-950/10' : 'border-brand-lightBorder dark:border-brand-darkBorder'}`}>
+              <div className="flex justify-between items-center mb-2">
+                <span className="text-xs font-bold flex items-center gap-1.5 text-slate-900 dark:text-white">
+                  ✨ Google Gemini {config.defaultProvider === 'gemini' && <span className="px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-500 text-[10px] font-black">ATIVO</span>}
+                </span>
+                <span className="text-[10px] font-bold text-slate-400">{configuredKeys.gemini ? '🔒 Chave Salva no Banco' : '⚠️ Chave não informada'}</span>
               </div>
-
-              <div>
-                <label className="block font-bold text-slate-700 dark:text-zinc-300 mb-1">
-                  Modelo Claude (Anthropic)
-                </label>
-                <input
-                  type="text"
-                  value={config.claudeModel}
-                  onChange={(e) => setConfig({ ...config, claudeModel: e.target.value })}
-                  className="w-full p-2 rounded-xl border border-brand-lightBorder dark:border-brand-darkBorder bg-slate-50 dark:bg-brand-dark outline-none font-mono text-[11px]"
-                />
-              </div>
-
-              <div>
-                <label className="block font-bold text-slate-700 dark:text-zinc-300 mb-1">
-                  Modelo NVIDIA NIM
-                </label>
-                <input
-                  type="text"
-                  value={config.nvidiaModel}
-                  onChange={(e) => setConfig({ ...config, nvidiaModel: e.target.value })}
-                  className="w-full p-2 rounded-xl border border-brand-lightBorder dark:border-brand-darkBorder bg-slate-50 dark:bg-brand-dark outline-none font-mono text-[11px]"
-                />
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
+                <div>
+                  <label className="block text-[10px] font-bold text-slate-500 mb-0.5">Modelo</label>
+                  <input
+                    type="text"
+                    value={config.geminiModel}
+                    onChange={(e) => setConfig({ ...config, geminiModel: e.target.value })}
+                    className="w-full p-2 rounded-lg border border-brand-lightBorder dark:border-brand-darkBorder bg-white dark:bg-brand-dark font-mono text-[11px] outline-none"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[10px] font-bold text-slate-500 mb-0.5">Nova Chave de API (Opcional)</label>
+                  <input
+                    type="password"
+                    placeholder={configuredKeys.gemini ? '••••••••••••••••' : 'Cole a chave AIzaSy...'}
+                    value={apiKeys.gemini}
+                    onChange={(e) => setApiKeys({ ...apiKeys, gemini: e.target.value })}
+                    className="w-full p-2 rounded-lg border border-brand-lightBorder dark:border-brand-darkBorder bg-white dark:bg-brand-dark font-mono text-[11px] outline-none"
+                  />
+                </div>
               </div>
             </div>
 
-            <div>
-              <label className="block text-xs font-bold text-slate-700 dark:text-zinc-300 mb-1">
-                Endpoint Customizado (Opcional)
-              </label>
-              <input
-                type="text"
-                placeholder="https://api.openai.com/v1 ou vLLM / Ollama"
-                value={config.customEndpointUrl}
-                onChange={(e) => setConfig({ ...config, customEndpointUrl: e.target.value })}
-                className="w-full p-2.5 rounded-xl border border-brand-lightBorder dark:border-brand-darkBorder bg-slate-50 dark:bg-brand-dark outline-none text-xs font-mono"
-              />
+            {/* Groq */}
+            <div className={`p-3.5 rounded-xl border transition ${config.defaultProvider === 'groq' ? 'border-brand-red bg-red-50/20 dark:bg-red-950/10' : 'border-brand-lightBorder dark:border-brand-darkBorder'}`}>
+              <div className="flex justify-between items-center mb-2">
+                <span className="text-xs font-bold flex items-center gap-1.5 text-slate-900 dark:text-white">
+                  ⚡ Groq Cloud {config.defaultProvider === 'groq' && <span className="px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-500 text-[10px] font-black">ATIVO</span>}
+                </span>
+                <span className="text-[10px] font-bold text-slate-400">{configuredKeys.groq ? '🔒 Chave Salva no Banco' : '⚠️ Chave não informada'}</span>
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
+                <div>
+                  <label className="block text-[10px] font-bold text-slate-500 mb-0.5">Modelo</label>
+                  <input
+                    type="text"
+                    value={config.groqModel}
+                    onChange={(e) => setConfig({ ...config, groqModel: e.target.value })}
+                    className="w-full p-2 rounded-lg border border-brand-lightBorder dark:border-brand-darkBorder bg-white dark:bg-brand-dark font-mono text-[11px] outline-none"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[10px] font-bold text-slate-500 mb-0.5">Nova Chave de API (Opcional)</label>
+                  <input
+                    type="password"
+                    placeholder={configuredKeys.groq ? '••••••••••••••••' : 'Cole a chave gsk_...'}
+                    value={apiKeys.groq}
+                    onChange={(e) => setApiKeys({ ...apiKeys, groq: e.target.value })}
+                    className="w-full p-2 rounded-lg border border-brand-lightBorder dark:border-brand-darkBorder bg-white dark:bg-brand-dark font-mono text-[11px] outline-none"
+                  />
+                </div>
+              </div>
+            </div>
+
+            {/* Claude */}
+            <div className={`p-3.5 rounded-xl border transition ${config.defaultProvider === 'claude' ? 'border-brand-red bg-red-50/20 dark:bg-red-950/10' : 'border-brand-lightBorder dark:border-brand-darkBorder'}`}>
+              <div className="flex justify-between items-center mb-2">
+                <span className="text-xs font-bold flex items-center gap-1.5 text-slate-900 dark:text-white">
+                  🧠 Anthropic Claude {config.defaultProvider === 'claude' && <span className="px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-500 text-[10px] font-black">ATIVO</span>}
+                </span>
+                <span className="text-[10px] font-bold text-slate-400">{configuredKeys.claude ? '🔒 Chave Salva no Banco' : '⚠️ Chave não informada'}</span>
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
+                <div>
+                  <label className="block text-[10px] font-bold text-slate-500 mb-0.5">Modelo</label>
+                  <input
+                    type="text"
+                    value={config.claudeModel}
+                    onChange={(e) => setConfig({ ...config, claudeModel: e.target.value })}
+                    className="w-full p-2 rounded-lg border border-brand-lightBorder dark:border-brand-darkBorder bg-white dark:bg-brand-dark font-mono text-[11px] outline-none"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[10px] font-bold text-slate-500 mb-0.5">Nova Chave de API (Opcional)</label>
+                  <input
+                    type="password"
+                    placeholder={configuredKeys.claude ? '••••••••••••••••' : 'Cole a chave sk-ant-...'}
+                    value={apiKeys.claude}
+                    onChange={(e) => setApiKeys({ ...apiKeys, claude: e.target.value })}
+                    className="w-full p-2 rounded-lg border border-brand-lightBorder dark:border-brand-darkBorder bg-white dark:bg-brand-dark font-mono text-[11px] outline-none"
+                  />
+                </div>
+              </div>
+            </div>
+
+            {/* NVIDIA */}
+            <div className={`p-3.5 rounded-xl border transition ${config.defaultProvider === 'nvidia' ? 'border-brand-red bg-red-50/20 dark:bg-red-950/10' : 'border-brand-lightBorder dark:border-brand-darkBorder'}`}>
+              <div className="flex justify-between items-center mb-2">
+                <span className="text-xs font-bold flex items-center gap-1.5 text-slate-900 dark:text-white">
+                  🚀 NVIDIA NIM {config.defaultProvider === 'nvidia' && <span className="px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-500 text-[10px] font-black">ATIVO</span>}
+                </span>
+                <span className="text-[10px] font-bold text-slate-400">{configuredKeys.nvidia ? '🔒 Chave Salva no Banco' : '⚠️ Chave não informada'}</span>
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
+                <div>
+                  <label className="block text-[10px] font-bold text-slate-500 mb-0.5">Modelo</label>
+                  <input
+                    type="text"
+                    value={config.nvidiaModel}
+                    onChange={(e) => setConfig({ ...config, nvidiaModel: e.target.value })}
+                    className="w-full p-2 rounded-lg border border-brand-lightBorder dark:border-brand-darkBorder bg-white dark:bg-brand-dark font-mono text-[11px] outline-none"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[10px] font-bold text-slate-500 mb-0.5">Nova Chave de API (Opcional)</label>
+                  <input
+                    type="password"
+                    placeholder={configuredKeys.nvidia ? '••••••••••••••••' : 'Cole a chave nvapi-...'}
+                    value={apiKeys.nvidia}
+                    onChange={(e) => setApiKeys({ ...apiKeys, nvidia: e.target.value })}
+                    className="w-full p-2 rounded-lg border border-brand-lightBorder dark:border-brand-darkBorder bg-white dark:bg-brand-dark font-mono text-[11px] outline-none"
+                  />
+                </div>
+              </div>
+            </div>
+
+            {/* Custom Endpoint */}
+            <div className={`p-3.5 rounded-xl border transition ${config.defaultProvider === 'custom' ? 'border-brand-red bg-red-50/20 dark:bg-red-950/10' : 'border-brand-lightBorder dark:border-brand-darkBorder'}`}>
+              <div className="flex justify-between items-center mb-2">
+                <span className="text-xs font-bold flex items-center gap-1.5 text-slate-900 dark:text-white">
+                  🔌 IA Personalizada / OpenAI Compatível {config.defaultProvider === 'custom' && <span className="px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-500 text-[10px] font-black">ATIVO</span>}
+                </span>
+                <span className="text-[10px] font-bold text-slate-400">{configuredKeys.custom ? '🔒 Chave Salva no Banco' : '⚠️ Sem Chave'}</span>
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
+                <div>
+                  <label className="block text-[10px] font-bold text-slate-500 mb-0.5">Endpoint URL</label>
+                  <input
+                    type="text"
+                    placeholder="https://api.openai.com/v1/chat/completions"
+                    value={config.customEndpointUrl}
+                    onChange={(e) => setConfig({ ...config, customEndpointUrl: e.target.value })}
+                    className="w-full p-2 rounded-lg border border-brand-lightBorder dark:border-brand-darkBorder bg-white dark:bg-brand-dark font-mono text-[11px] outline-none"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[10px] font-bold text-slate-500 mb-0.5">Bearer Token / Chave</label>
+                  <input
+                    type="password"
+                    placeholder={configuredKeys.custom ? '••••••••••••••••' : 'Cole a chave/token'}
+                    value={apiKeys.custom}
+                    onChange={(e) => setApiKeys({ ...apiKeys, custom: e.target.value })}
+                    className="w-full p-2 rounded-lg border border-brand-lightBorder dark:border-brand-darkBorder bg-white dark:bg-brand-dark font-mono text-[11px] outline-none"
+                  />
+                </div>
+              </div>
             </div>
           </div>
 
           <div className="lg:col-span-5 bg-white dark:bg-brand-darkCard border border-brand-lightBorder dark:border-brand-darkBorder rounded-2xl p-6 shadow-sm space-y-6">
             <h3 className="text-sm font-black uppercase tracking-wider text-slate-900 dark:text-white flex items-center gap-2">
-              <Sliders className="w-4 h-4 text-brand-red" /> Parâmetros de Inferência
+              <Sliders className="w-4 h-4 text-brand-red" /> Parâmetros Globais de Inferência
             </h3>
 
             <div>
@@ -340,12 +518,13 @@ export const AiConfigView: React.FC = () => {
               />
             </div>
 
-            <div className="p-4 rounded-xl bg-slate-50 dark:bg-brand-dark border border-brand-lightBorder dark:border-brand-darkBorder">
-              <div className="flex items-center gap-2 text-xs font-bold text-slate-800 dark:text-zinc-200 mb-1">
-                <ShieldCheck className="w-4 h-4 text-emerald-500" /> Segurança de Chaves de API
+            <div className="p-4 rounded-xl bg-slate-50 dark:bg-brand-dark border border-brand-lightBorder dark:border-brand-darkBorder space-y-2">
+              <div className="flex items-center gap-2 text-xs font-bold text-slate-800 dark:text-zinc-200">
+                <ShieldCheck className="w-4 h-4 text-emerald-500" /> Governança & Segurança
               </div>
-              <p className="text-[11px] text-slate-500 dark:text-zinc-400">
-                Todas as chaves secretas (<code>GROQ_API_KEY</code>, <code>GEMINI_API_KEY</code>, <code>ANTHROPIC_API_KEY</code>) são armazenadas de forma segura nas variáveis de ambiente do backend serverless (<code>/api/generate</code>) e nunca são expostas ao navegador do cliente.
+              <p className="text-[11px] text-slate-500 dark:text-zinc-400 leading-relaxed">
+                As chaves e o provedor ativo são persistidos na tabela <code>public.api_settings</code> protegida por RLS.
+                O backend serverless (<code>/api/generate</code>) executa a chamada com <code>SUPABASE_SERVICE_ROLE_KEY</code>, garantindo que nenhum revendedor acesse as credenciais ou force outro provedor.
               </p>
             </div>
           </div>
@@ -437,6 +616,11 @@ export const AiConfigView: React.FC = () => {
               <Flame className="w-4 h-4 text-brand-red" /> Simulador de Abordagem
             </h3>
 
+            <div className="p-3 rounded-xl bg-slate-50 dark:bg-brand-dark border border-brand-lightBorder dark:border-brand-darkBorder text-xs">
+              <span className="text-slate-500">Provedor Ativo Configurado:</span>{' '}
+              <b className="text-brand-red uppercase">{config.defaultProvider}</b>
+            </div>
+
             <div>
               <label className="block text-xs font-bold text-slate-700 dark:text-zinc-300 mb-1">
                 Nome do Contato Teste
@@ -494,7 +678,7 @@ export const AiConfigView: React.FC = () => {
               disabled={testing}
               className="w-full py-2.5 bg-brand-red hover:bg-brand-redHover text-white rounded-xl text-xs font-bold flex items-center justify-center gap-2 shadow-sm disabled:opacity-50"
             >
-              {testing ? 'Gerando resposta...' : <><Sparkles className="w-4 h-4" /> Executar Teste em Tempo Real</>}
+              {testing ? 'Gerando resposta...' : <><Sparkles className="w-4 h-4" /> Executar Teste com Provedor Ativo</>}
             </button>
           </div>
 
@@ -506,15 +690,15 @@ export const AiConfigView: React.FC = () => {
               <textarea
                 rows={12}
                 readOnly
-                placeholder="A mensagem gerada pelo modelo de IA selecionado aparecerá aqui..."
+                placeholder="A mensagem gerada pelo modelo de IA configurado aparecerá aqui..."
                 value={playgroundOutput}
                 className="w-full p-4 rounded-xl border border-brand-lightBorder dark:border-brand-darkBorder bg-slate-50 dark:bg-brand-dark text-xs font-mono leading-relaxed outline-none"
               />
             </div>
 
             <div className="mt-4 pt-3 border-t border-brand-lightBorder dark:border-brand-darkBorder flex items-center justify-between text-xs text-slate-400">
-              <span>Provedor: <b>{config.defaultProvider.toUpperCase()}</b></span>
-              <span>Temperatura: <b>{config.temperature}</b></span>
+              <span>Provedor Utilizado: <b>{(playgroundMeta.provider || config.defaultProvider).toUpperCase()}</b></span>
+              <span>Modelo: <b>{playgroundMeta.model || 'Padrão do Banco'}</b></span>
             </div>
           </div>
         </div>
@@ -522,3 +706,4 @@ export const AiConfigView: React.FC = () => {
     </div>
   );
 };
+
