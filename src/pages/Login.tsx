@@ -2,7 +2,8 @@ import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { ThemeToggle } from '../components/ThemeToggle';
-import { Flame, Lock, Mail, AlertCircle, ArrowRight } from 'lucide-react';
+import { Lock, Mail, AlertCircle, ArrowRight } from 'lucide-react';
+import { MsplayLogo } from '../components/ui/MsplayLogo';
 
 export const Login: React.FC = () => {
   const [email, setEmail] = useState('');
@@ -54,14 +55,9 @@ export const Login: React.FC = () => {
           <div className="absolute top-0 left-0 right-0 h-1.5 bg-brand-red"></div>
 
           <div className="flex flex-col items-center text-center mb-8">
-            <div className="bg-brand-red p-3 rounded-2xl text-white shadow-lg shadow-brand-red/30 mb-3">
-              <Flame className="w-8 h-8 fill-white" />
-            </div>
-            <h1 className="text-3xl font-black tracking-tight text-brand-red">
-              MSPLAY
-            </h1>
+            <MsplayLogo variant="stacked" withContainer={true} className="mb-3" />
             <p className="text-xs uppercase tracking-widest font-bold text-slate-500 dark:text-zinc-400 mt-1">
-              WhatsApp CRM & IA Engine
+              Plataforma Comercial & CRM Inteligente
             </p>
           </div>
 

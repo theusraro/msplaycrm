@@ -27,7 +27,7 @@ export const InstallPrompt: React.FC = () => {
     deferredPrompt.prompt();
     const { outcome } = await deferredPrompt.userChoice;
     if (outcome === 'accepted') {
-      console.log('PWA instalado pelo usuário');
+      console.log('PWA instalado pelo usuÃ¡rio');
     }
     setDeferredPrompt(null);
     setShowPrompt(false);
@@ -48,8 +48,8 @@ export const InstallPrompt: React.FC = () => {
             <Download className="w-4 h-4" />
           </div>
           <div>
-            <p className="font-bold text-slate-900 dark:text-white">Instalar App MSPLAY</p>
-            <p className="text-[10px] text-slate-500 dark:text-zinc-400">Acesso rápido direto da sua tela inicial</p>
+            <p className="font-bold text-slate-900 dark:text-white">Instalar MSPLAY CRM</p>
+            <p className="text-[10px] text-slate-500 dark:text-zinc-400">Acesso direto ao seu CRM na tela inicial</p>
           </div>
         </div>
 
@@ -70,4 +70,4 @@ export const InstallPrompt: React.FC = () => {
       </div>
     </div>
   );
-};
+};

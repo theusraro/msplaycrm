@@ -12,7 +12,7 @@ export const UpdatePrompt: React.FC = () => {
       if (r) {
         setInterval(() => {
           r.update();
-        }, 60 * 60 * 1000); // Checar atualizações a cada hora
+        }, 60 * 60 * 1000); // Checar atualizaÃ§Ãµes a cada hora
       }
     },
     onRegisterError(error) {
@@ -30,9 +30,9 @@ export const UpdatePrompt: React.FC = () => {
             <Sparkles className="w-5 h-5" />
           </div>
           <div>
-            <h4 className="text-xs font-bold text-white">Nova versão do MSPLAY disponível</h4>
+            <h4 className="text-xs font-bold text-white">Nova versÃ£o do MSPLAY CRM disponÃ­vel</h4>
             <p className="text-[11px] text-zinc-400 mt-0.5">
-              Atualize agora para receber as últimas melhorias e correções.
+              Atualize agora para receber as Ãºltimas melhorias e correÃ§Ãµes.
             </p>
             <div className="flex items-center gap-2 mt-3">
               <button
@@ -61,4 +61,4 @@ export const UpdatePrompt: React.FC = () => {
       </div>
     </div>
   );
-};
+};

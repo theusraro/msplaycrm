@@ -65,11 +65,11 @@ export default defineConfig(({ mode }) => {
       apiDevPlugin(),
       VitePWA({
         registerType: 'prompt',
-        includeAssets: ['favicon.svg', 'icons/*.{png,svg}'],
+        includeAssets: ['favicon.svg', 'favicon.ico', 'favicon.png', 'apple-touch-icon.png', 'icons/*.{png,svg}'],
         manifest: {
           name: 'MSPLAY CRM',
-          short_name: 'MSPLAY',
-          description: 'CRM Inteligente e Gestão Comercial MSPLAY',
+          short_name: 'MSPLAY CRM',
+          description: 'MSPLAY CRM - Plataforma Inteligente de Gestão Comercial e Revenda',
           theme_color: '#0a0a0a',
           background_color: '#0a0a0a',
           display: 'standalone',

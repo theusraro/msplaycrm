@@ -1,7 +1,29 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
-  <rect width="512" height="512" rx="0" fill="#0a0a0a"/>
-  <circle cx="256" cy="256" r="215.04" fill="#18181b" stroke="#27272a" stroke-width="7.68"/>
-  <circle cx="256" cy="256" r="194.56" fill="none" stroke="#ef4444" stroke-width="10.24" stroke-dasharray="76.8 25.6"/>
-  <path d="M194.56 163.84 L358.4 256 L194.56 348.16 Z" fill="#ef4444" stroke="#ffffff" stroke-width="10.24" stroke-linejoin="round"/>
-  <text x="256" y="430.08" fill="#ffffff" font-family="system-ui, -apple-system, sans-serif" font-weight="900" font-size="66.56" text-anchor="middle">MSPLAY</text>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="100%" height="100%">
+  <defs>
+    <radialGradient id="redGlow" cx="50%" cy="45%" r="50%">
+      <stop offset="0%" stop-color="#E50914" stop-opacity="0.35"/>
+      <stop offset="100%" stop-color="#000000" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+  <rect width="512" height="512" fill="#0a0a0a"/>
+  <!-- Background Diagonal Stripes -->
+  <polygon points="200,512 320,512 512,280 512,160" fill="#A00A14" opacity="0.7"/>
+  <polygon points="300,512 430,512 512,380 512,250" fill="#E50914" opacity="0.9"/>
+  <polygon points="410,512 512,512 512,380" fill="#780A0F" opacity="0.8"/>
+  <rect width="512" height="512" fill="url(#redGlow)"/>
+  
+  <!-- MSPLAY Group -->
+  <g transform="translate(256, 215)" text-anchor="middle">
+    <text font-family="Arial Black, Impact, sans-serif" font-weight="900" font-size="98" letter-spacing="1">
+      <tspan x="-86" fill="#E50914">MS</tspan><tspan x="64" fill="#FFFFFF">PLAY</tspan>
+    </text>
+    <!-- Red Play Triangle inside 'A' -->
+    <polygon points="65, -34 65, -10 82, -22" fill="#E50914"/>
+  </g>
+  
+  <!-- CRM Badge -->
+  <g transform="translate(256, 315)">
+    <rect x="-90" y="-32" width="180" height="64" rx="20" fill="#0f0f0f" stroke="#E50914" stroke-width="6"/>
+    <text x="0" y="14" fill="#FFFFFF" font-family="Arial Black, Impact, sans-serif" font-size="42" font-weight="900" text-anchor="middle" letter-spacing="2">CRM</text>
+  </g>
 </svg>

@@ -282,6 +282,18 @@ export const ResellerDashboard: React.FC = () => {
 
   return (
     <div className="space-y-6">
+      {/* Header de Boas-vindas MSPLAY CRM */}
+      <div className="bg-white dark:bg-brand-darkCard border border-brand-lightBorder dark:border-brand-darkBorder p-5 rounded-2xl flex flex-col md:flex-row items-start md:items-center justify-between gap-4 shadow-sm">
+        <div>
+          <h1 className="text-xl font-black tracking-tight text-slate-900 dark:text-white flex items-center gap-2">
+            Olá, {profile?.nome_completo || profile?.nome || 'Revendedor'}!
+          </h1>
+          <p className="text-xs text-slate-500 dark:text-zinc-400 mt-0.5">
+            Bem-vindo ao seu painel <span className="font-bold text-brand-red">MSPLAY CRM</span>. Gerencie seus leads e personalize seus criativos.
+          </p>
+        </div>
+      </div>
+
       {/* Barra de Configuração do WhatsApp do Revendedor */}
       <div className="bg-white dark:bg-brand-darkCard border border-brand-lightBorder dark:border-brand-darkBorder p-4 rounded-2xl flex flex-col sm:flex-row items-center justify-between gap-4 shadow-sm">
         <div className="flex items-center gap-3">

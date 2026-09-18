@@ -1,7 +1,8 @@
 import React from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { ThemeToggle } from './ThemeToggle';
-import { LogOut, ShieldCheck, UserCheck, Flame } from 'lucide-react';
+import { LogOut, ShieldCheck, UserCheck } from 'lucide-react';
+import { MsplayLogo } from './ui/MsplayLogo';
 
 export const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const { profile, signOut, isAdmin } = useAuth();
@@ -11,17 +12,7 @@ export const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) =>
       <header className="sticky top-0 z-40 w-full border-b border-brand-lightBorder dark:border-brand-darkBorder bg-white/90 dark:bg-brand-darkCard/90 backdrop-blur-md px-4 lg:px-8 py-3 transition-colors duration-200">
         <div className="max-w-7xl mx-auto flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <div className="bg-brand-red p-2 rounded-xl text-white shadow-md shadow-brand-red/20">
-              <Flame className="w-6 h-6 fill-white" />
-            </div>
-            <div>
-              <span className="text-2xl font-black tracking-wider text-brand-red">
-                MSPLAY
-              </span>
-              <span className="hidden sm:inline-block ml-2 text-xs font-bold uppercase tracking-widest px-2 py-0.5 rounded bg-brand-red/10 text-brand-red dark:bg-brand-red/20">
-                CRM & IA
-              </span>
-            </div>
+            <MsplayLogo variant="horizontal" size="md" />
           </div>
 
           <div className="flex items-center gap-3">
@@ -60,7 +51,7 @@ export const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) =>
       </main>
 
       <footer className="border-t border-brand-lightBorder dark:border-brand-darkBorder py-4 text-center text-xs text-slate-500 dark:text-zinc-500">
-        MSPLAY WhatsApp CRM &bull; Plataforma Multi-Revendedor Inteligente
+        MSPLAY CRM &bull; Plataforma Inteligente de Gestão Comercial e Revenda
       </footer>
     </div>
   );

@@ -13,9 +13,9 @@ import {
   LogOut,
   ChevronLeft,
   ChevronRight,
-  Flame,
   X,
 } from 'lucide-react';
+import { MsplayLogo } from '../ui/MsplayLogo';
 
 export type AdminTab =
   | 'dashboard'
@@ -101,18 +101,10 @@ export const AdminSidebar: React.FC<AdminSidebarProps> = ({
       <div>
         <div className="flex items-center justify-between p-4 border-b border-brand-lightBorder dark:border-zinc-800/80">
           <div className="flex items-center gap-2.5 overflow-hidden">
-            <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-brand-red text-white shadow-lg shadow-brand-red/20">
-              <Flame className="h-5 w-5 fill-white" />
-            </div>
-            {!isCollapsed && (
-              <div className="flex flex-col">
-                <span className="text-base font-black tracking-wider text-brand-red">
-                  MSPLAY
-                </span>
-                <span className="text-[10px] font-bold uppercase tracking-widest text-slate-500 dark:text-zinc-400">
-                  ADMIN CRM
-                </span>
-              </div>
+            {isCollapsed ? (
+              <MsplayLogo variant="icon" size="sm" />
+            ) : (
+              <MsplayLogo variant="horizontal" size="sm" />
             )}
           </div>
 
