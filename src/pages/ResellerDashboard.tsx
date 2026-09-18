@@ -1,13 +1,31 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../contexts/AuthContext';
-import { Contact } from '../types';
-import { Sparkles, Copy, Send, Check, Search, User, AlertCircle, Image as ImageIcon, Phone, CheckCircle2, Clock, Inbox } from 'lucide-react';
+import { useToast } from '../contexts/ToastContext';
+import { Contact, Creative } from '../types';
+import {
+  Sparkles,
+  Copy,
+  Send,
+  Check,
+  Search,
+  User,
+  AlertCircle,
+  Image as ImageIcon,
+  Phone,
+  CheckCircle2,
+  Clock,
+  Inbox,
+  Download,
+  RefreshCw,
+  Tag
+} from 'lucide-react';
 
 export const ResellerDashboard: React.FC = () => {
   const { profile, session } = useAuth();
+  const { addToast } = useToast();
   const [contacts, setContacts] = useState<(Contact & { status?: string })[]>([]);
-  const [creatives, setCreatives] = useState<any[]>([]);
+  const [creatives, setCreatives] = useState<Creative[]>([]);
   const [selectedContact, setSelectedContact] = useState<Contact | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
   const [activeTab, setActiveTab] = useState<'leads' | 'creatives'>('leads');
@@ -18,6 +36,7 @@ export const ResellerDashboard: React.FC = () => {
   const [resellerPhone, setResellerPhone] = useState(localStorage.getItem('msplay_reseller_phone') || '');
   const [generatedMessage, setGeneratedMessage] = useState('');
   const [loading, setLoading] = useState(false);
+  const [generatingId, setGeneratingId] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
 
@@ -41,7 +60,10 @@ export const ResellerDashboard: React.FC = () => {
     }
 
     // Buscar imagens de divulgação cadastradas pelo Admin
-    const { data: creativesData } = await supabase.from('creatives').select('*').order('created_at', { ascending: false });
+    const { data: creativesData } = await supabase
+      .from('creatives')
+      .select('*')
+      .order('created_at', { ascending: false });
     if (creativesData) setCreatives(creativesData);
   };
 
@@ -123,19 +145,14 @@ export const ResellerDashboard: React.FC = () => {
       .eq('contact_id', contactId);
 
     if (error) {
-      alert('Erro ao atualizar status: ' + error.message);
+      addToast('Erro ao atualizar status: ' + error.message, 'error');
       return;
     }
 
     fetchLeadsAndCreatives();
   };
 
-  const generateCustomImage = (imageUrl: string, title: string) => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return;
-
+  const generateCustomImage = async (cr: { id: string; imagem_url: string; titulo: string }) => {
     const activePhone = (
       resellerPhone ||
       profile?.whatsapp ||
@@ -145,14 +162,31 @@ export const ResellerDashboard: React.FC = () => {
     ).trim();
 
     if (!activePhone) {
-      alert('Por favor, informe seu número de WhatsApp no topo da tela antes de baixar a imagem.');
+      addToast('Por favor, informe seu número de WhatsApp no topo da tela antes de baixar a imagem.', 'warning');
       return;
     }
 
-    const img = new window.Image();
-    img.crossOrigin = 'anonymous';
-    img.src = imageUrl;
-    img.onload = () => {
+    setGeneratingId(cr.id);
+
+    try {
+      const img = new Image();
+      img.crossOrigin = 'anonymous';
+
+      // Cache buster para evitar conflitos de cache no navegador com CORS
+      const srcUrl = cr.imagem_url.startsWith('data:') || cr.imagem_url.startsWith('blob:')
+        ? cr.imagem_url
+        : `${cr.imagem_url}${cr.imagem_url.includes('?') ? '&' : '?'}t=${Date.now()}`;
+
+      await new Promise<void>((resolve, reject) => {
+        img.onload = () => resolve();
+        img.onerror = () => reject(new Error('Não foi possível carregar a imagem original.'));
+        img.src = srcUrl;
+      });
+
+      const canvas = canvasRef.current || document.createElement('canvas');
+      const ctx = canvas.getContext('2d');
+      if (!ctx) throw new Error('Não foi possível inicializar o canvas de desenho.');
+
       const width = img.naturalWidth || img.width || 1080;
       const height = img.naturalHeight || img.height || 1080;
 
@@ -206,13 +240,42 @@ export const ResellerDashboard: React.FC = () => {
       const phoneY = footerY + (footerHeight * 0.75);
       ctx.fillText(phoneText, width / 2, phoneY);
 
-      // 7. Exporta imagem limpa em PNG mantendo resolução original sem qualquer sobreposição anterior
-      const cleanPhoneForName = activePhone.replace(/\D/g, '');
-      const link = document.createElement('a');
-      link.download = `${title.replace(/\s+/g, '_')}_${cleanPhoneForName || 'zap'}.png`;
-      link.href = canvas.toDataURL('image/png');
-      link.click();
-    };
+      // 7. Exporta imagem limpa em PNG utilizando toBlob para melhor performance e compatibilidade
+      await new Promise<void>((resolve, reject) => {
+        canvas.toBlob((blob) => {
+          if (!blob) {
+            reject(new Error('Falha ao processar o arquivo da imagem.'));
+            return;
+          }
+
+          const blobUrl = URL.createObjectURL(blob);
+          const cleanPhone = activePhone.replace(/\D/g, '');
+          const cleanTitle = (cr.titulo || 'criativo').replace(/[^a-zA-Z0-9_-]/g, '_');
+          const link = document.createElement('a');
+          link.download = `${cleanTitle}_${cleanPhone || 'zap'}.png`;
+          link.href = blobUrl;
+          document.body.appendChild(link);
+          link.click();
+          document.body.removeChild(link);
+          setTimeout(() => URL.revokeObjectURL(blobUrl), 10000);
+          resolve();
+        }, 'image/png');
+      });
+
+      addToast('Criativo baixado com sucesso!', 'success');
+    } catch (err: any) {
+      console.error('Erro na personalização do criativo:', err);
+      if (err.name === 'SecurityError' || (err.message && err.message.includes('Tainted'))) {
+        addToast(
+          'Esta imagem externa bloqueia edição de terceiros por políticas de CORS. Solicite ao Admin cadastrar a arte via Upload direto de arquivo.',
+          'error'
+        );
+      } else {
+        addToast(err.message || 'Erro ao gerar criativo personalizado.', 'error');
+      }
+    } finally {
+      setGeneratingId(null);
+    }
   };
 
   const filteredContacts = contacts.filter(c => c.status === statusFilter && c.nome.toLowerCase().includes(searchTerm.toLowerCase()));
@@ -328,17 +391,43 @@ export const ResellerDashboard: React.FC = () => {
 
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
             {creatives.map(cr => (
-              <div key={cr.id} className="border border-brand-lightBorder dark:border-brand-darkBorder rounded-2xl p-4 bg-slate-50 dark:bg-brand-dark flex flex-col justify-between">
+              <div key={cr.id} className="border border-brand-lightBorder dark:border-brand-darkBorder rounded-2xl p-4 bg-slate-50 dark:bg-brand-dark flex flex-col justify-between group">
                 <div>
-                  <img src={cr.imagem_url} alt={cr.titulo} className="w-full h-48 object-cover rounded-xl mb-3" />
-                  <h3 className="font-bold text-sm text-slate-900 dark:text-white">{cr.titulo}</h3>
-                  <p className="text-xs text-slate-500 mt-1">{cr.descricao || 'Criativo otimizado para conversão.'}</p>
+                  <div className="relative mb-3">
+                    <img
+                      src={cr.imagem_url}
+                      alt={cr.titulo}
+                      className="w-full h-48 object-cover rounded-xl group-hover:scale-[1.02] transition duration-200"
+                      onError={(e) => {
+                        (e.target as HTMLImageElement).src = 'https://placehold.co/600x400/18181b/ffffff?text=Criativo';
+                      }}
+                    />
+                    <div className="absolute top-2 left-2">
+                      <span className="px-2 py-0.5 rounded-lg bg-black/70 backdrop-blur-xs text-white text-[10px] font-bold flex items-center gap-1">
+                        <Tag className="w-3 h-3 text-brand-red" /> {cr.categoria || 'Geral'}
+                      </span>
+                    </div>
+                  </div>
+                  <h3 className="font-bold text-sm text-slate-900 dark:text-white leading-snug">{cr.titulo}</h3>
+                  <p className="text-xs text-slate-500 mt-1 line-clamp-2">{cr.descricao || 'Criativo otimizado para conversão no WhatsApp.'}</p>
                 </div>
+
                 <button 
-                  onClick={() => generateCustomImage(cr.imagem_url, cr.titulo)}
-                  className="mt-4 w-full bg-brand-red hover:bg-brand-redHover text-white py-2.5 rounded-xl text-xs font-bold flex items-center justify-center gap-2"
+                  onClick={() => generateCustomImage(cr)}
+                  disabled={generatingId !== null}
+                  className="mt-4 w-full bg-brand-red hover:bg-brand-redHover text-white py-2.5 rounded-xl text-xs font-bold flex items-center justify-center gap-2 disabled:opacity-50 transition shadow-sm"
                 >
-                  <ImageIcon className="w-4 h-4" /> Baixar Imagem com Meu Zap
+                  {generatingId === cr.id ? (
+                    <>
+                      <RefreshCw className="w-4 h-4 animate-spin" />
+                      Personalizando Imagem...
+                    </>
+                  ) : (
+                    <>
+                      <Download className="w-4 h-4" />
+                      Baixar Imagem com Meu Zap
+                    </>
+                  )}
                 </button>
               </div>
             ))}
