@@ -139,7 +139,6 @@ export const ResellersView: React.FC = () => {
             telefone: newResellerData.telefone,
             whatsapp: newResellerData.telefone,
             role: 'reseller',
-            status: 'active',
             status_admin: 'ativo',
             lead_quota: Number(newResellerData.lead_quota) || 20,
             ativo: true
@@ -164,13 +163,14 @@ export const ResellersView: React.FC = () => {
   };
 
   const handleToggleStatus = async (reseller: Profile) => {
-    const newStatus = reseller.status === 'active' || reseller.ativo ? 'inactive' : 'active';
-    const isAtivo = newStatus === 'active';
+    const isCurrentlyAtivo = reseller.ativo ?? (reseller.status_admin === 'ativo');
+    const isAtivo = !isCurrentlyAtivo;
+    const newStatusAdmin: 'ativo' | 'suspenso' = isAtivo ? 'ativo' : 'suspenso';
 
     try {
       const { error } = await supabase
         .from('profiles')
-        .update({ status: newStatus, ativo: isAtivo })
+        .update({ ativo: isAtivo, status_admin: newStatusAdmin })
         .eq('id', reseller.id);
 
       if (error) throw error;
@@ -178,10 +178,11 @@ export const ResellersView: React.FC = () => {
       await logAuditEvent('update_reseller_status', {
         reseller_id: reseller.id,
         email: reseller.email,
-        new_status: newStatus
+        ativo: isAtivo,
+        status_admin: newStatusAdmin
       });
 
-      addToast(`Status atualizado para ${newStatus === 'active' ? 'Ativo' : 'Inativo'}`, 'success');
+      addToast(`Status atualizado para ${isAtivo ? 'Ativo' : 'Suspenso'}`, 'success');
       loadData();
     } catch (err: any) {
       addToast(err.message || 'Erro ao alterar status', 'error');
@@ -337,7 +338,7 @@ export const ResellersView: React.FC = () => {
             <tbody className="divide-y divide-brand-lightBorder dark:divide-brand-darkBorder text-xs">
               {filteredResellers.map((r) => {
                 const sum = summaries[r.id];
-                const isActive = r.status === 'active' || r.ativo;
+                const isActive = r.ativo ?? (r.status_admin === 'ativo');
                 return (
                   <tr
                     key={r.id}
