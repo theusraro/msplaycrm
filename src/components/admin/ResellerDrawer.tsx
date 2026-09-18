@@ -262,9 +262,9 @@ export const ResellerDrawer: React.FC<ResellerDrawerProps> = ({
                       <h4 className="font-bold text-slate-900 dark:text-white">{item.contacts?.nome || 'Sem Nome'}</h4>
                       <p className="text-slate-500 dark:text-zinc-400 text-[11px] flex items-center gap-2 mt-0.5">
                         <span>{item.contacts?.telefone}</span>
-                        {item.contacts?.origem && (
-                          <span className="text-[10px] px-1.5 py-0.2 rounded bg-slate-100 dark:bg-zinc-800 text-slate-500">
-                            {item.contacts.origem}
+                        {item.contacts?.tags && Array.isArray(item.contacts.tags) && item.contacts.tags.length > 0 && (
+                          <span className="text-[10px] px-1.5 py-0.2 rounded bg-slate-100 dark:bg-zinc-800 text-slate-500 uppercase">
+                            {item.contacts.tags.join(', ')}
                           </span>
                         )}
                       </p>

@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { supabase } from '../../lib/supabase';
 import { useToast } from '../../contexts/ToastContext';
+import { useAuth } from '../../contexts/AuthContext';
 import { StatusBadge } from '../../components/ui/StatusBadge';
 import { EmptyState } from '../../components/ui/EmptyState';
 import { logAuditEvent } from '../../services/auditService';
@@ -48,6 +49,7 @@ export interface ContactWithAssignments extends Contact {
 
 export const LeadsView: React.FC = () => {
   const { addToast } = useToast();
+  const { user } = useAuth();
   const [loading, setLoading] = useState(true);
   const [contacts, setContacts] = useState<ContactWithAssignments[]>([]);
   const [resellers, setResellers] = useState<Profile[]>([]);
@@ -62,7 +64,7 @@ export const LeadsView: React.FC = () => {
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [showDistributeModal, setShowDistributeModal] = useState(false);
   const [showImportModal, setShowImportModal] = useState(false);
-  const [newLeadData, setNewLeadData] = useState({ nome: '', telefone: '', observacoes: '', origem: 'manual' });
+  const [newLeadData, setNewLeadData] = useState({ nome: '', telefone: '', observacoes: '' });
   const [importFile, setImportFile] = useState<File | null>(null);
   const [importPreview, setImportPreview] = useState<any[]>([]);
   const [importLoading, setImportLoading] = useState(false);
@@ -155,14 +157,25 @@ export const LeadsView: React.FC = () => {
     }
 
     try {
+      const payload: {
+        nome: string;
+        telefone: string;
+        observacoes?: string;
+        tags: string[];
+        created_by?: string;
+      } = {
+        nome: newLeadData.nome.trim(),
+        telefone: newLeadData.telefone.trim(),
+        observacoes: newLeadData.observacoes.trim(),
+        tags: ['manual']
+      };
+      if (user?.id) {
+        payload.created_by = user.id;
+      }
+
       const { data, error } = await supabase
         .from('contacts')
-        .insert([{
-          nome: newLeadData.nome.trim(),
-          telefone: newLeadData.telefone.trim(),
-          observacoes: newLeadData.observacoes.trim(),
-          origem: newLeadData.origem || 'manual'
-        }])
+        .insert([payload])
         .select()
         .single();
 
@@ -176,7 +189,7 @@ export const LeadsView: React.FC = () => {
 
       addToast('Lead cadastrado com sucesso!', 'success');
       setShowCreateModal(false);
-      setNewLeadData({ nome: '', telefone: '', observacoes: '', origem: 'manual' });
+      setNewLeadData({ nome: '', telefone: '', observacoes: '' });
       loadData();
     } catch (err: any) {
       addToast(err.message || 'Erro ao cadastrar lead', 'error');
@@ -212,7 +225,8 @@ export const LeadsView: React.FC = () => {
     nome: string;
     telefone: string;
     observacoes: string;
-    origem: string;
+    tags: string[];
+    created_by?: string;
   }
 
   const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -281,6 +295,14 @@ export const LeadsView: React.FC = () => {
       let invalidCount = 0;
       const seenInBatch = new Set<string>();
 
+      const extTag = fileName.endsWith('.vcf')
+        ? 'vcf'
+        : fileName.endsWith('.txt')
+        ? 'txt'
+        : fileName.endsWith('.xlsx') || fileName.endsWith('.xls')
+        ? 'excel'
+        : 'csv';
+
       rawItems.forEach((item) => {
         const rawNome = String(item.nome || '').trim();
         const rawTel = String(item.telefone || '').trim();
@@ -303,12 +325,18 @@ export const LeadsView: React.FC = () => {
         }
 
         seenInBatch.add(normalized.cleanDigits);
-        validNew.push({
+
+        const itemPayload: FormattedContact = {
           nome: rawNome || `Lead ${normalized.cleanDigits.slice(-4)}`,
           telefone: normalized.formatted,
           observacoes: rawObs,
-          origem: fileName.endsWith('.vcf') ? 'import_vcf' : fileName.endsWith('.txt') ? 'import_txt' : 'import_csv'
-        });
+          tags: [extTag]
+        };
+        if (user?.id) {
+          itemPayload.created_by = user.id;
+        }
+
+        validNew.push(itemPayload);
       });
 
       setImportStats({
@@ -370,7 +398,7 @@ export const LeadsView: React.FC = () => {
       Nome: c.nome,
       Telefone: c.telefone,
       Observacoes: c.observacoes || '',
-      Origem: c.origem || '',
+      Tags: (c.tags && Array.isArray(c.tags) && c.tags.length > 0) ? c.tags.join(', ') : '',
       Status: c.assignments.length === 0 ? 'Livre' : c.assignments.map((a) => a.status).join('; '),
       Revendedores: c.assignments.length === 0
         ? 'Não distribuído'

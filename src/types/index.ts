@@ -30,7 +30,6 @@ export interface Contact {
   id: string;
   nome: string;
   telefone: string;
-  origem?: string;
   observacoes?: string;
   tags?: string[];
   status?: string;
