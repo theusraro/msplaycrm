@@ -39,7 +39,7 @@ interface AiConfigState {
 const DEFAULT_CONFIG: AiConfigState = {
   defaultProvider: 'gemini',
   groqModel: 'llama-3.3-70b-versatile',
-  geminiModel: 'gemini-1.5-flash',
+  geminiModel: 'gemini-3.6-flash',
   claudeModel: 'claude-3-5-sonnet-20240620',
   nvidiaModel: 'meta/llama-3.1-70b-instruct',
   openrouterModel: 'meta-llama/llama-3.3-70b-instruct:free',
@@ -141,11 +141,20 @@ export const AiConfigView: React.FC = () => {
 
   const handleSaveConfig = async () => {
     setSaving(true);
-    try {
-      // 1. Respeitar o índice único parcial (ativo = true): desativar todos antes
-      await supabase.from('api_settings').update({ ativo: false }).neq('id', '00000000-0000-0000-0000-000000000000');
 
-      // 2. Salvar/Atualizar cada provedor em public.api_settings
+    try {
+      const { error: deactivateError } = await supabase
+        .from('api_settings')
+        .update({
+          ativo: false,
+          updated_at: new Date().toISOString()
+        })
+        .neq('id', '00000000-0000-0000-0000-000000000000');
+
+      if (deactivateError) {
+        throw new Error(`Erro ao desativar provedores: ${deactivateError.message}`);
+      }
+
       const providersList = [
         { provider: 'gemini', default_model: config.geminiModel, base_url: null, key: apiKeys.gemini },
         { provider: 'groq', default_model: config.groqModel, base_url: null, key: apiKeys.groq },
@@ -159,38 +168,49 @@ export const AiConfigView: React.FC = () => {
         const isThisActive = p.provider === config.defaultProvider;
         const updatePayload: any = {
           provider: p.provider,
-          default_model: p.default_model,
-          base_url: p.base_url,
+          default_model: p.default_model || null,
+          base_url: p.base_url || null,
           ativo: isThisActive,
           updated_at: new Date().toISOString()
         };
-        if (p.key && p.key.trim()) {
-          updatePayload.api_key = p.key.trim();
-        }
 
-        await supabase.from('api_settings').upsert(updatePayload, { onConflict: 'provider' });
+        if (p.key && p.key.trim()) updatePayload.api_key = p.key.trim();
+
+        const { error: providerError } = await supabase
+          .from('api_settings')
+          .upsert(updatePayload, { onConflict: 'provider' });
+
+        if (providerError) {
+          throw new Error(`Erro ao salvar ${p.provider}: ${providerError.message}`);
+        }
       }
 
-      // 3. Salvar prompts e parâmetros adicionais em system_settings
-      await supabase.from('system_settings').upsert({
-        key: 'ai_configuration',
-        value: config,
-        updated_at: new Date().toISOString()
-      });
+      const { error: settingsError } = await supabase
+        .from('system_settings')
+        .upsert({
+          key: 'ai_configuration',
+          value: config,
+          updated_at: new Date().toISOString()
+        }, { onConflict: 'key' });
 
-      // 4. Registrar auditoria
+      if (settingsError) {
+        throw new Error(`Erro ao salvar configurações gerais: ${settingsError.message}`);
+      }
+
       await logAuditEvent('update_ai_config', {
         provider: config.defaultProvider,
         temperature: config.temperature
       });
 
-      // Recarregar status de chaves e limpar inputs de chave temporários
       setApiKeys({ gemini: '', groq: '', claude: '', nvidia: '', openrouter: '', custom: '' });
       await loadConfig();
-
-      addToast('Configurações de IA salvas com sucesso no banco!', 'success');
+      addToast(`Configuração salva. Provedor ativo: ${config.defaultProvider.toUpperCase()}`, 'success');
     } catch (err: any) {
-      addToast('Erro ao salvar configurações: ' + (err.message || 'Erro desconhecido'), 'error');
+      console.error('Erro ao salvar configuração de IA:', err);
+      addToast(
+        err?.message ? `Erro ao salvar configurações: ${err.message}` : 'Erro desconhecido ao salvar configurações de IA',
+        'error'
+      );
     } finally {
       setSaving(false);
     }
@@ -217,8 +237,16 @@ export const AiConfigView: React.FC = () => {
         })
       });
 
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.error || 'Erro na resposta do backend');
+      const rawText = await response.text();
+      let data: any = {};
+      try {
+        data = rawText ? JSON.parse(rawText) : {};
+      } catch {
+        console.error('Resposta do backend não é JSON válido:', rawText);
+        throw new Error(`Resposta inválida do servidor (${response.status}): ${rawText.slice(0, 120) || 'Corpo vazio'}`);
+      }
+
+      if (!response.ok) throw new Error(data.error || `Erro na resposta do backend (${response.status})`);
       setPlaygroundOutput(data.text);
       setPlaygroundMeta({ provider: data.provider, model: data.model });
       addToast(`Mensagem gerada com sucesso via ${data.provider?.toUpperCase()}!`, 'success');
@@ -706,4 +734,3 @@ export const AiConfigView: React.FC = () => {
     </div>
   );
 };
-

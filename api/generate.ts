@@ -7,12 +7,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   const authHeader = req.headers.authorization;
   if (!authHeader) return res.status(401).json({ error: 'Não autorizado' });
 
-  const supabaseUrl = process.env.VITE_SUPABASE_URL || '';
-  const supabaseAnonKey = process.env.VITE_SUPABASE_ANON_KEY || '';
-  const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  const supabaseUrl = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL || '';
+  const supabaseAnonKey = process.env.VITE_SUPABASE_ANON_KEY || process.env.SUPABASE_ANON_KEY || '';
+  const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY || supabaseAnonKey;
 
-  if (!serviceRoleKey) {
-    return res.status(500).json({ error: 'Configuração interna do servidor incompleta (SUPABASE_SERVICE_ROLE_KEY ausente).' });
+  if (!supabaseUrl || !serviceRoleKey) {
+    return res.status(500).json({ error: 'Configuração interna do servidor incompleta (SUPABASE_URL ou chaves ausentes).' });
   }
 
   const supabaseUser = createClient(supabaseUrl, supabaseAnonKey);
@@ -133,13 +133,17 @@ Regras:
     }
 
     if (generatedText) {
-      await supabaseAdmin.from('messages_log').insert({
-        user_id: user.id,
-        tipo_mensagem: messageType || 'personalizada',
-        provedor_ia: provider,
-        modelo: usedModel || 'padrao',
-        mensagem_gerada: generatedText.trim()
-      });
+      try {
+        await supabaseAdmin.from('messages_log').insert({
+          user_id: user.id,
+          tipo_mensagem: messageType || 'personalizada',
+          provedor_ia: provider,
+          modelo: usedModel || 'padrao',
+          mensagem_gerada: generatedText.trim()
+        });
+      } catch (logErr) {
+        console.warn('Falha não-bloqueante ao registrar messages_log:', logErr);
+      }
     }
 
     return res.status(200).json({ text: generatedText.trim(), provider, model: usedModel });

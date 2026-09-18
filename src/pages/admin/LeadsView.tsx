@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+﻿import React, { useState, useEffect, useRef } from 'react';
 import { supabase } from '../../lib/supabase';
 import { useToast } from '../../contexts/ToastContext';
 import { StatusBadge } from '../../components/ui/StatusBadge';
@@ -72,7 +72,11 @@ export const LeadsView: React.FC = () => {
       const [contactsRes, assignmentsRes, resellersRes] = await Promise.all([
         supabase.from('contacts').select('*').order('created_at', { ascending: false }),
         supabase.from('contact_assignments').select('*, profiles:user_id(nome_completo, email)'),
-        supabase.from('profiles').select('*').eq('role', 'reseller').eq('status', 'active')
+       supabase
+  .from('profiles')
+  .select('*')
+  .eq('role', 'reseller')
+  .eq('ativo', true)
       ]);
 
       const cList = contactsRes.data || [];
@@ -136,7 +140,7 @@ export const LeadsView: React.FC = () => {
   const handleCreateLead = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newLeadData.nome || !newLeadData.telefone) {
-      addToast('Nome e telefone são obrigatórios', 'warning');
+      addToast('Nome e telefone sÃ£o obrigatÃ³rios', 'warning');
       return;
     }
 
@@ -173,7 +177,7 @@ export const LeadsView: React.FC = () => {
       if (error) throw error;
 
       await logAuditEvent('delete_leads', { count: ids.length, ids });
-      addToast(`${ids.length} lead(s) excluído(s) com sucesso`, 'success');
+      addToast(`${ids.length} lead(s) excluÃ­do(s) com sucesso`, 'success');
       setSelectedLeadIds([]);
       loadData();
     } catch (err: any) {
@@ -272,7 +276,7 @@ export const LeadsView: React.FC = () => {
         .filter((item): item is FormattedContact => item !== null);
 
       if (formatted.length === 0) {
-        addToast('Nenhum contato válido encontrado no arquivo. Verifique se as colunas possuem Nome e Telefone.', 'warning');
+        addToast('Nenhum contato vÃ¡lido encontrado no arquivo. Verifique se as colunas possuem Nome e Telefone.', 'warning');
         setImportLoading(false);
         return;
       }
@@ -308,7 +312,7 @@ export const LeadsView: React.FC = () => {
       Telefone: c.telefone,
       Observacoes: c.observacoes || '',
       Origem: c.origem || '',
-      Status: c.assignment?.status || 'Não atribuído',
+      Status: c.assignment?.status || 'NÃ£o atribuÃ­do',
       Revendedor: c.assignment?.reseller?.nome_completo || c.assignment?.reseller?.email || 'Nenhum',
       DataCadastro: new Date(c.created_at).toLocaleDateString('pt-BR')
     }));
@@ -328,7 +332,7 @@ export const LeadsView: React.FC = () => {
   // Distribution Algorithm (Smart Equal / Quota Distribution)
   const handleDistributeLeads = async () => {
     if (resellers.length === 0) {
-      addToast('Não há revendedores ativos para receber leads.', 'warning');
+      addToast('NÃ£o hÃ¡ revendedores ativos para receber leads.', 'warning');
       return;
     }
 
@@ -341,7 +345,7 @@ export const LeadsView: React.FC = () => {
       }
 
       if (leadsToDistribute.length === 0) {
-        addToast('Nenhum lead livre selecionado para distribuição.', 'warning');
+        addToast('Nenhum lead livre selecionado para distribuiÃ§Ã£o.', 'warning');
         setDistributing(false);
         return;
       }
@@ -386,7 +390,7 @@ export const LeadsView: React.FC = () => {
         target: distributeTargetReseller
       });
 
-      addToast(`${assignmentsToInsert.length} leads distribuídos com sucesso!`, 'success');
+      addToast(`${assignmentsToInsert.length} leads distribuÃ­dos com sucesso!`, 'success');
       setShowDistributeModal(false);
       setSelectedLeadIds([]);
       loadData();
@@ -419,10 +423,10 @@ export const LeadsView: React.FC = () => {
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
           <h1 className="text-xl font-black text-slate-900 dark:text-white tracking-tight flex items-center gap-2">
-            <Layers className="w-6 h-6 text-brand-red" /> Gestão e Distribuição de Leads
+            <Layers className="w-6 h-6 text-brand-red" /> GestÃ£o e DistribuiÃ§Ã£o de Leads
           </h1>
           <p className="text-xs text-slate-500 dark:text-zinc-400 mt-0.5">
-            Importe listas CSV/Excel, gerencie o funil e faça a distribuição automática para revendedores.
+            Importe listas CSV/Excel, gerencie o funil e faÃ§a a distribuiÃ§Ã£o automÃ¡tica para revendedores.
           </p>
         </div>
 
@@ -565,9 +569,9 @@ export const LeadsView: React.FC = () => {
                 <th className="py-3 px-4">Lead / Contato</th>
                 <th className="py-3 px-4">Telefone / WhatsApp</th>
                 <th className="py-3 px-4">Status no Funil</th>
-                <th className="py-3 px-4">Revendedor Responsável</th>
-                <th className="py-3 px-4">Observações</th>
-                <th className="py-3 px-4 text-right">Ações</th>
+                <th className="py-3 px-4">Revendedor ResponsÃ¡vel</th>
+                <th className="py-3 px-4">ObservaÃ§Ãµes</th>
+                <th className="py-3 px-4 text-right">AÃ§Ãµes</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-brand-lightBorder dark:divide-brand-darkBorder text-xs">
@@ -614,7 +618,7 @@ export const LeadsView: React.FC = () => {
                             ? 'Novo'
                             : c.assignment.status === 'pendente'
                             ? 'Em Atendimento'
-                            : 'Venda Concluída'
+                            : 'Venda ConcluÃ­da'
                         }
                       />
                     </td>
@@ -624,7 +628,7 @@ export const LeadsView: React.FC = () => {
                           {c.assignment.reseller.nome_completo || c.assignment.reseller.email}
                         </span>
                       ) : (
-                        <span className="text-slate-400 italic">Não distribuído</span>
+                        <span className="text-slate-400 italic">NÃ£o distribuÃ­do</span>
                       )}
                     </td>
                     <td className="py-3.5 px-4 max-w-xs truncate text-slate-500">
@@ -672,21 +676,21 @@ export const LeadsView: React.FC = () => {
 
             <div className="space-y-4 mt-4 text-xs">
               <p className="text-slate-600 dark:text-zinc-300">
-                Você está prestes a distribuir{' '}
+                VocÃª estÃ¡ prestes a distribuir{' '}
                 <b>{selectedLeadIds.length > 0 ? selectedLeadIds.length : unassignedCount}</b> lead(s) livres.
               </p>
 
               <div>
                 <label className="block font-bold text-slate-700 dark:text-zinc-300 mb-1">
-                  Método de Distribuição:
+                  MÃ©todo de DistribuiÃ§Ã£o:
                 </label>
                 <select
                   value={distributeTargetReseller}
                   onChange={(e) => setDistributeTargetReseller(e.target.value)}
                   className="w-full p-2.5 rounded-xl border border-brand-lightBorder dark:border-brand-darkBorder bg-slate-50 dark:bg-brand-dark font-bold text-slate-800 dark:text-zinc-200 outline-none"
                 >
-                  <option value="auto">⚡ Distribuir Igualmente entre todos os Revendedores Ativos</option>
-                  <optgroup label="Ou atribuir para um revendedor específico:">
+                  <option value="auto">âš¡ Distribuir Igualmente entre todos os Revendedores Ativos</option>
+                  <optgroup label="Ou atribuir para um revendedor especÃ­fico:">
                     {resellers.map((r) => (
                       <option key={r.id} value={r.id}>
                         {r.nome_completo || r.email} (Cota: {r.lead_quota || 20})
@@ -709,7 +713,7 @@ export const LeadsView: React.FC = () => {
                   disabled={distributing}
                   className="px-4 py-2 rounded-xl bg-brand-red hover:bg-brand-redHover text-white font-bold disabled:opacity-50 flex items-center gap-2"
                 >
-                  {distributing ? 'Distribuindo...' : 'Confirmar Distribuição'}
+                  {distributing ? 'Distribuindo...' : 'Confirmar DistribuiÃ§Ã£o'}
                 </button>
               </div>
             </div>
@@ -756,7 +760,7 @@ export const LeadsView: React.FC = () => {
               {importPreview.length > 0 && (
                 <div>
                   <h4 className="font-bold text-slate-700 dark:text-zinc-300 mb-1">
-                    Prévia das primeiras 5 linhas:
+                    PrÃ©via das primeiras 5 linhas:
                   </h4>
                   <div className="bg-slate-100 dark:bg-brand-dark p-2 rounded-xl text-[10px] font-mono overflow-x-auto max-h-32">
                     <pre>{JSON.stringify(importPreview, null, 2)}</pre>
@@ -777,7 +781,7 @@ export const LeadsView: React.FC = () => {
                   disabled={!importFile || importLoading}
                   className="px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-bold disabled:opacity-50 flex items-center gap-2"
                 >
-                  {importLoading ? 'Processando...' : 'Iniciar Importação'}
+                  {importLoading ? 'Processando...' : 'Iniciar ImportaÃ§Ã£o'}
                 </button>
               </div>
             </div>
@@ -806,7 +810,7 @@ export const LeadsView: React.FC = () => {
                 <input
                   type="text"
                   required
-                  placeholder="Ex: João da Silva"
+                  placeholder="Ex: JoÃ£o da Silva"
                   value={newLeadData.nome}
                   onChange={(e) => setNewLeadData({ ...newLeadData, nome: e.target.value })}
                   className="w-full p-2.5 rounded-xl border border-brand-lightBorder dark:border-brand-darkBorder bg-slate-50 dark:bg-brand-dark outline-none focus:ring-2 focus:ring-brand-red"
@@ -829,11 +833,11 @@ export const LeadsView: React.FC = () => {
 
               <div>
                 <label className="block font-bold text-slate-700 dark:text-zinc-300 mb-1">
-                  Observações / Notas Comerciais
+                  ObservaÃ§Ãµes / Notas Comerciais
                 </label>
                 <textarea
                   rows={3}
-                  placeholder="Interesse em plano trimestral, usuário de smart tv..."
+                  placeholder="Interesse em plano trimestral, usuÃ¡rio de smart tv..."
                   value={newLeadData.observacoes}
                   onChange={(e) => setNewLeadData({ ...newLeadData, observacoes: e.target.value })}
                   className="w-full p-2.5 rounded-xl border border-brand-lightBorder dark:border-brand-darkBorder bg-slate-50 dark:bg-brand-dark outline-none focus:ring-2 focus:ring-brand-red"
@@ -862,3 +866,4 @@ export const LeadsView: React.FC = () => {
     </div>
   );
 };
+

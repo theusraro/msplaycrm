@@ -47,6 +47,12 @@ export const ResellerDashboard: React.FC = () => {
 
   useEffect(() => {
     fetchLeadsAndCreatives();
+    if (profile && !resellerPhone) {
+      const phoneFromProfile = profile.whatsapp || profile.telefone || '';
+      if (phoneFromProfile) {
+        setResellerPhone(phoneFromProfile);
+      }
+    }
   }, [profile]);
 
   const handleSavePhone = (phone: string) => {
@@ -72,11 +78,21 @@ export const ResellerDashboard: React.FC = () => {
         })
       });
 
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.error || 'Erro na API');
+      const rawText = await response.text();
+      let data: any = {};
+      try {
+        data = rawText ? JSON.parse(rawText) : {};
+      } catch {
+        console.error('Resposta do backend não é JSON válido:', rawText);
+        throw new Error(`Resposta inválida do servidor (${response.status}): ${rawText.slice(0, 120) || 'Corpo vazio'}`);
+      }
+
+      if (!response.ok) {
+        throw new Error(data.error || `Erro no servidor (${response.status})`);
+      }
       setGeneratedMessage(data.text);
     } catch (err: any) {
-      setErrorMsg(err.message);
+      setErrorMsg(err.message || 'Falha ao gerar mensagem');
     } finally {
       setLoading(false);
     }
@@ -120,29 +136,80 @@ export const ResellerDashboard: React.FC = () => {
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
 
+    const activePhone = (
+      resellerPhone ||
+      profile?.whatsapp ||
+      profile?.telefone ||
+      localStorage.getItem('msplay_reseller_phone') ||
+      ''
+    ).trim();
+
+    if (!activePhone) {
+      alert('Por favor, informe seu número de WhatsApp no topo da tela antes de baixar a imagem.');
+      return;
+    }
+
     const img = new window.Image();
     img.crossOrigin = 'anonymous';
     img.src = imageUrl;
     img.onload = () => {
-      canvas.width = img.width || 1080;
-      canvas.height = img.height || 1080;
-      ctx.drawImage(img, 0, 0);
+      const width = img.naturalWidth || img.width || 1080;
+      const height = img.naturalHeight || img.height || 1080;
 
-      if (resellerPhone) {
-        ctx.fillStyle = 'rgba(0, 0, 0, 0.85)';
-        ctx.fillRect(0, canvas.height - 140, canvas.width, 140);
+      canvas.width = width;
+      canvas.height = height;
 
-        ctx.fillStyle = '#ef4444';
-        ctx.font = 'bold 36px sans-serif';
-        ctx.fillText('GARANTA JÁ O SEU TESTE!', 50, canvas.height - 85);
+      // 1. Desenha a imagem original mantendo resolução nativa
+      ctx.drawImage(img, 0, 0, width, height);
 
-        ctx.fillStyle = '#ffffff';
-        ctx.font = 'bold 44px sans-serif';
-        ctx.fillText(`📞 WhatsApp: ${resellerPhone}`, 50, canvas.height - 35);
+      // 2. Calcula a área do rodapé proporcional às dimensões reais da imagem
+      const footerRatio = height >= width ? 0.12 : 0.14;
+      const footerHeight = Math.max(130, Math.round(height * footerRatio));
+      const footerY = height - footerHeight;
+
+      // 3. Limpa e cobre COMPLETAMENTE o rodapé antigo com fundo 100% opaco da identidade MSPLAY (#050505)
+      ctx.fillStyle = '#050505';
+      ctx.fillRect(0, footerY, width, footerHeight);
+
+      // 4. Linha de destaque/borda superior vermelha da identidade MSPLAY (#ef4444)
+      const accentHeight = Math.max(4, Math.round(footerHeight * 0.035));
+      ctx.fillStyle = '#ef4444';
+      ctx.fillRect(0, footerY, width, accentHeight);
+
+      // 5. Configuração e desenho da CTA ("GARANTA JÁ O SEU TESTE!")
+      const ctaText = 'GARANTA JÁ O SEU TESTE!';
+      let ctaFontSize = Math.max(16, Math.round(footerHeight * 0.25));
+      ctx.font = `bold ${ctaFontSize}px sans-serif`;
+      ctx.fillStyle = '#ef4444';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+
+      // Ajuste dinâmico de escala da CTA se a largura for estreita
+      while (ctx.measureText(ctaText).width > width - 40 && ctaFontSize > 12) {
+        ctaFontSize -= 2;
+        ctx.font = `bold ${ctaFontSize}px sans-serif`;
       }
+      const ctaY = footerY + (footerHeight * 0.38);
+      ctx.fillText(ctaText, width / 2, ctaY);
 
+      // 6. Configuração e desenho do WhatsApp do Revendedor
+      const phoneText = `📞 WhatsApp: ${activePhone}`;
+      let phoneFontSize = Math.max(20, Math.round(footerHeight * 0.33));
+      ctx.font = `bold ${phoneFontSize}px sans-serif`;
+      ctx.fillStyle = '#ffffff';
+
+      // Ajuste dinâmico de escala do telefone para nunca vazar das margens
+      while (ctx.measureText(phoneText).width > width - 40 && phoneFontSize > 14) {
+        phoneFontSize -= 2;
+        ctx.font = `bold ${phoneFontSize}px sans-serif`;
+      }
+      const phoneY = footerY + (footerHeight * 0.75);
+      ctx.fillText(phoneText, width / 2, phoneY);
+
+      // 7. Exporta imagem limpa em PNG mantendo resolução original sem qualquer sobreposição anterior
+      const cleanPhoneForName = activePhone.replace(/\D/g, '');
       const link = document.createElement('a');
-      link.download = `${title.replace(/\s+/g, '_')}_${resellerPhone || 'zap'}.png`;
+      link.download = `${title.replace(/\s+/g, '_')}_${cleanPhoneForName || 'zap'}.png`;
       link.href = canvas.toDataURL('image/png');
       link.click();
     };
@@ -268,13 +335,7 @@ export const ResellerDashboard: React.FC = () => {
                   <p className="text-xs text-slate-500 mt-1">{cr.descricao || 'Criativo otimizado para conversão.'}</p>
                 </div>
                 <button 
-                  onClick={() => {
-                    if (!resellerPhone) {
-                      alert('Por favor, informe seu número de WhatsApp no topo da tela antes de baixar a imagem.');
-                      return;
-                    }
-                    generateCustomImage(cr.imagem_url, cr.titulo);
-                  }}
+                  onClick={() => generateCustomImage(cr.imagem_url, cr.titulo)}
                   className="mt-4 w-full bg-brand-red hover:bg-brand-redHover text-white py-2.5 rounded-xl text-xs font-bold flex items-center justify-center gap-2"
                 >
                   <ImageIcon className="w-4 h-4" /> Baixar Imagem com Meu Zap

@@ -5,7 +5,8 @@ import { useAuth } from '../contexts/AuthContext';
 export const ProtectedRoute: React.FC<{
   children: React.ReactNode;
   requireAdmin?: boolean;
-}> = ({ children, requireAdmin = false }) => {
+  requireReseller?: boolean;
+}> = ({ children, requireAdmin = false, requireReseller = false }) => {
   const { user, profile, loading, isAdmin } = useAuth();
 
   if (loading) {
@@ -25,14 +26,20 @@ export const ProtectedRoute: React.FC<{
       <div className="min-h-screen flex flex-col items-center justify-center p-4 text-center bg-brand-light dark:bg-brand-dark">
         <h1 className="text-2xl font-bold text-brand-red mb-2">Acesso Inativo</h1>
         <p className="text-slate-600 dark:text-zinc-400 max-w-md">
-          Sua conta de revendedor foi desativada pelo administrador. Entre em contato com a equipe de suporte da MSPLAY.
+          Sua conta foi desativada pelo administrador. Entre em contato com a equipe de suporte da MSPLAY.
         </p>
       </div>
     );
   }
 
+  // Rota exige admin, mas usuário é revendedor -> redireciona para dashboard de revendedor
   if (requireAdmin && !isAdmin) {
     return <Navigate to="/dashboard" replace />;
+  }
+
+  // Rota é de revendedor, mas usuário é admin -> redireciona para painel admin
+  if (requireReseller && isAdmin) {
+    return <Navigate to="/admin" replace />;
   }
 
   return <>{children}</>;

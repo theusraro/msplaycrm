@@ -18,14 +18,28 @@ export const Login: React.FC = () => {
     setErrorMsg('');
     setIsSubmitting(true);
 
-    const { error } = await signIn(email, password);
+    const { error, profile } = await signIn(email, password);
 
     if (error) {
       setErrorMsg('E-mail ou senha incorretos. Verifique suas credenciais.');
       setIsSubmitting(false);
+    } else if (profile) {
+      if (!profile.ativo) {
+        setErrorMsg('Sua conta está desativada. Entre em contato com o suporte da MSPLAY.');
+        setIsSubmitting(false);
+        return;
+      }
+      if (profile.role === 'admin') {
+        navigate('/admin', { replace: true });
+      } else if (profile.role === 'reseller') {
+        navigate('/dashboard', { replace: true });
+      } else {
+        setErrorMsg('Perfil sem nível de permissão válido configurado.');
+        setIsSubmitting(false);
+      }
     } else {
-      // O App.tsx lida com o redirecionamento com base no profile
-      navigate('/dashboard');
+      setErrorMsg('Perfil de usuário não encontrado no sistema.');
+      setIsSubmitting(false);
     }
   };
 
