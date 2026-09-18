@@ -25,26 +25,31 @@ import {
   AlertCircle,
   X,
   Zap,
-  ArrowRight
+  ArrowRight,
+  Users,
+  CheckSquare
 } from 'lucide-react';
 
-interface ContactWithAssignment extends Contact {
-  assignment?: {
-    id: string;
-    user_id: string;
-    status: 'novo' | 'pendente' | 'concluido';
-    assigned_at: string;
-    reseller?: {
-      nome_completo?: string;
-      email: string;
-    };
+export interface AssignmentInfo {
+  id: string;
+  contact_id: string;
+  user_id: string;
+  status: 'novo' | 'pendente' | 'concluido' | string;
+  assigned_at: string;
+  reseller?: {
+    nome_completo?: string;
+    email: string;
   };
+}
+
+export interface ContactWithAssignments extends Contact {
+  assignments: AssignmentInfo[];
 }
 
 export const LeadsView: React.FC = () => {
   const { addToast } = useToast();
   const [loading, setLoading] = useState(true);
-  const [contacts, setContacts] = useState<ContactWithAssignment[]>([]);
+  const [contacts, setContacts] = useState<ContactWithAssignments[]>([]);
   const [resellers, setResellers] = useState<Profile[]>([]);
 
   // Search & Filter
@@ -61,7 +66,10 @@ export const LeadsView: React.FC = () => {
   const [importFile, setImportFile] = useState<File | null>(null);
   const [importPreview, setImportPreview] = useState<any[]>([]);
   const [importLoading, setImportLoading] = useState(false);
-  const [distributeTargetReseller, setDistributeTargetReseller] = useState<string>('auto');
+
+  // Distribution / Assignment Multi-reseller state
+  const [selectedResellerIds, setSelectedResellerIds] = useState<string[]>([]);
+  const [distributionMode, setDistributionMode] = useState<'assign_all' | 'round_robin'>('assign_all');
   const [distributing, setDistributing] = useState(false);
 
   const fileInputRef = useRef<HTMLInputElement | null>(null);
@@ -72,31 +80,33 @@ export const LeadsView: React.FC = () => {
       const [contactsRes, assignmentsRes, resellersRes] = await Promise.all([
         supabase.from('contacts').select('*').order('created_at', { ascending: false }),
         supabase.from('contact_assignments').select('*, profiles:user_id(nome_completo, email)'),
-       supabase
-  .from('profiles')
-  .select('*')
-  .eq('role', 'reseller')
-  .eq('ativo', true)
+        supabase
+          .from('profiles')
+          .select('*')
+          .eq('role', 'reseller')
+          .eq('ativo', true)
       ]);
 
       const cList = contactsRes.data || [];
       const aList = assignmentsRes.data || [];
       setResellers(resellersRes.data || []);
 
-      // Merge assignments into contacts
-      const merged: ContactWithAssignment[] = cList.map((c: any) => {
-        const assign = aList.find((a: any) => a.contact_id === c.id);
+      // Merge ALL assignments into contacts (1:N relationship)
+      const merged: ContactWithAssignments[] = cList.map((c: any) => {
+        const contactAssigns: AssignmentInfo[] = aList
+          .filter((a: any) => a.contact_id === c.id)
+          .map((a: any) => ({
+            id: a.id,
+            contact_id: a.contact_id,
+            user_id: a.user_id,
+            status: a.status || 'novo',
+            assigned_at: a.assigned_at,
+            reseller: a.profiles
+          }));
+
         return {
           ...c,
-          assignment: assign
-            ? {
-                id: assign.id,
-                user_id: assign.user_id,
-                status: assign.status || 'novo',
-                assigned_at: assign.assigned_at,
-                reseller: assign.profiles
-              }
-            : undefined
+          assignments: contactAssigns
         };
       });
 
@@ -121,20 +131,20 @@ export const LeadsView: React.FC = () => {
 
     let matchStatus = true;
     if (statusFilter === 'unassigned') {
-      matchStatus = !c.assignment;
+      matchStatus = c.assignments.length === 0;
     } else if (statusFilter !== 'all') {
-      matchStatus = c.assignment?.status === statusFilter;
+      matchStatus = c.assignments.some((a) => a.status === statusFilter);
     }
 
     let matchReseller = true;
     if (resellerFilter !== 'all') {
-      matchReseller = c.assignment?.user_id === resellerFilter;
+      matchReseller = c.assignments.some((a) => a.user_id === resellerFilter);
     }
 
     return matchSearch && matchStatus && matchReseller;
   });
 
-  const unassignedCount = contacts.filter((c) => !c.assignment).length;
+  const unassignedCount = contacts.filter((c) => c.assignments.length === 0).length;
 
   // Single Lead Creation
   const handleCreateLead = async (e: React.FormEvent) => {
@@ -175,7 +185,7 @@ export const LeadsView: React.FC = () => {
 
   // Delete Leads
   const handleDeleteLeads = async (ids: string[]) => {
-    if (!confirm(`Deseja excluir ${ids.length} lead(s) selecionado(s)?`)) return;
+    if (!confirm(`Deseja realmente excluir ${ids.length} lead(s) selecionado(s)?`)) return;
 
     try {
       const { error } = await supabase.from('contacts').delete().in('id', ids);
@@ -190,116 +200,162 @@ export const LeadsView: React.FC = () => {
     }
   };
 
-  // File Import Handling
-  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+  // File Import Handling with Multi-format parser (CSV, XLSX, TXT, VCF) and phone normalization
+  const [importStats, setImportStats] = useState<{
+    total: number;
+    validNew: FormattedContact[];
+    existingCount: number;
+    invalidCount: number;
+  } | null>(null);
+
+  interface FormattedContact {
+    nome: string;
+    telefone: string;
+    observacoes: string;
+    origem: string;
+  }
+
+  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
     setImportFile(file);
+    setImportStats(null);
     const fileName = file.name.toLowerCase();
 
-    if (fileName.endsWith('.csv')) {
-      Papa.parse(file, {
-        header: true,
-        skipEmptyLines: true,
-        complete: (results: any) => {
-          setImportPreview(results.data.slice(0, 5));
-        },
-        error: (err: any) => {
-          addToast('Erro ao ler CSV: ' + err.message, 'error');
-        }
-      });
-    } else if (fileName.endsWith('.xlsx') || fileName.endsWith('.xls')) {
-      const reader = new FileReader();
-      reader.onload = (evt) => {
-        try {
-          const bstr = evt.target?.result;
-          const wb = XLSX.read(bstr, { type: 'binary' });
-          const wsname = wb.SheetNames[0];
-          const ws = wb.Sheets[wsname];
-          const data = XLSX.utils.sheet_to_json(ws);
-          setImportPreview(data.slice(0, 5));
-        } catch (err: any) {
-          addToast('Erro ao ler Excel: ' + err.message, 'error');
-        }
-      };
-      reader.readAsBinaryString(file);
-    }
-  };
-
-  const handleExecuteImport = async () => {
-    if (!importFile) return;
-    setImportLoading(true);
-
     try {
-      let rowsToProcess: any[] = [];
+      let rawItems: { nome: string; telefone: string; observacoes?: string }[] = [];
 
-      if (importFile.name.toLowerCase().endsWith('.csv')) {
+      if (fileName.endsWith('.vcf')) {
+        const text = await file.text();
+        const parsed = (await import('../../utils/vcfParser')).parseVCard(text);
+        rawItems = parsed;
+        setImportPreview(parsed.slice(0, 5));
+      } else if (fileName.endsWith('.txt')) {
+        const text = await file.text();
+        const parsed = (await import('../../utils/vcfParser')).parsePlainTextContacts(text);
+        rawItems = parsed;
+        setImportPreview(parsed.slice(0, 5));
+      } else if (fileName.endsWith('.csv')) {
         await new Promise((resolve, reject) => {
-          Papa.parse(importFile, {
+          Papa.parse(file, {
             header: true,
             skipEmptyLines: true,
             complete: (results: any) => {
-              rowsToProcess = results.data;
+              const rows = results.data || [];
+              setImportPreview(rows.slice(0, 5));
+              rawItems = rows.map((row: any) => ({
+                nome: row.nome || row.Nome || row.name || row.Name || row.Cliente || row.cliente || '',
+                telefone: row.telefone || row.Telefone || row.phone || row.Phone || row.WhatsApp || row.whatsapp || row.Celular || row.celular || '',
+                observacoes: row.observacoes || row.Observacoes || row.notas || row.Notas || row.obs || row.Obs || ''
+              }));
               resolve(true);
             },
             error: reject
           });
         });
-      } else {
-        const data = await importFile.arrayBuffer();
+      } else if (fileName.endsWith('.xlsx') || fileName.endsWith('.xls')) {
+        const data = await file.arrayBuffer();
         const wb = XLSX.read(data);
         const ws = wb.Sheets[wb.SheetNames[0]];
-        rowsToProcess = XLSX.utils.sheet_to_json(ws);
+        const rows: any[] = XLSX.utils.sheet_to_json(ws);
+        setImportPreview(rows.slice(0, 5));
+        rawItems = rows.map((row: any) => ({
+          nome: row.nome || row.Nome || row.name || row.Name || row.Cliente || row.cliente || '',
+          telefone: row.telefone || row.Telefone || row.phone || row.Phone || row.WhatsApp || row.whatsapp || row.Celular || row.celular || '',
+          observacoes: row.observacoes || row.Observacoes || row.notas || row.Notas || row.obs || row.Obs || ''
+        }));
       }
 
-      // Map rows to contacts schema
-      interface FormattedContact {
-        nome: string;
-        telefone: string;
-        observacoes: string;
-        origem: string;
-      }
+      // Analisar telefones existentes no banco para detectar duplicados
+      const { normalizeBrazilianPhone } = await import('../../utils/phoneNormalizer');
+      const existingPhones = new Set<string>();
+      contacts.forEach((c) => {
+        const norm = normalizeBrazilianPhone(c.telefone);
+        if (norm.isValid) existingPhones.add(norm.cleanDigits);
+        else existingPhones.add(c.telefone.replace(/\D/g, ''));
+      });
 
-      const formatted: FormattedContact[] = rowsToProcess
-        .map((row: any): FormattedContact | null => {
-          const nome = row.nome || row.Nome || row.name || row.Name || row.Cliente || row.cliente || '';
-          const telefone = row.telefone || row.Telefone || row.phone || row.Phone || row.WhatsApp || row.whatsapp || row.Celular || row.celular || '';
-          const observacoes = row.observacoes || row.Observacoes || row.notas || row.Notas || row.obs || row.Obs || '';
+      const validNew: FormattedContact[] = [];
+      let existingCount = 0;
+      let invalidCount = 0;
+      const seenInBatch = new Set<string>();
 
-          if (!nome || !telefone) return null;
+      rawItems.forEach((item) => {
+        const rawNome = String(item.nome || '').trim();
+        const rawTel = String(item.telefone || '').trim();
+        const rawObs = String(item.observacoes || '').trim();
 
-          return {
-            nome: String(nome).trim(),
-            telefone: String(telefone).trim(),
-            observacoes: String(observacoes || '').trim(),
-            origem: 'import_csv'
-          };
-        })
-        .filter((item): item is FormattedContact => item !== null);
+        if (!rawTel) {
+          invalidCount++;
+          return;
+        }
 
-      if (formatted.length === 0) {
-        addToast('Nenhum contato válido encontrado no arquivo. Verifique se as colunas possuem Nome e Telefone.', 'warning');
-        setImportLoading(false);
-        return;
-      }
+        const normalized = normalizeBrazilianPhone(rawTel);
+        if (!normalized.isValid) {
+          invalidCount++;
+          return;
+        }
 
-      // Insert in chunks of 100
-      for (let i = 0; i < formatted.length; i += 100) {
-        const chunk = formatted.slice(i, i + 100);
+        if (existingPhones.has(normalized.cleanDigits) || seenInBatch.has(normalized.cleanDigits)) {
+          existingCount++;
+          return;
+        }
+
+        seenInBatch.add(normalized.cleanDigits);
+        validNew.push({
+          nome: rawNome || `Lead ${normalized.cleanDigits.slice(-4)}`,
+          telefone: normalized.formatted,
+          observacoes: rawObs,
+          origem: fileName.endsWith('.vcf') ? 'import_vcf' : fileName.endsWith('.txt') ? 'import_txt' : 'import_csv'
+        });
+      });
+
+      setImportStats({
+        total: rawItems.length,
+        validNew,
+        existingCount,
+        invalidCount
+      });
+    } catch (err: any) {
+      addToast('Erro ao processar arquivo: ' + err.message, 'error');
+    }
+  };
+
+  const handleExecuteImport = async () => {
+    if (!importStats || importStats.validNew.length === 0) {
+      addToast('Nenhum novo lead válido para importar.', 'warning');
+      return;
+    }
+    setImportLoading(true);
+
+    try {
+      const itemsToInsert = importStats.validNew;
+
+      // Inserir em lotes de 100
+      for (let i = 0; i < itemsToInsert.length; i += 100) {
+        const chunk = itemsToInsert.slice(i, i + 100);
         const { error } = await supabase.from('contacts').insert(chunk);
         if (error) throw error;
       }
 
       await logAuditEvent('import_leads', {
-        count: formatted.length,
-        filename: importFile.name
+        count: itemsToInsert.length,
+        filename: importFile?.name,
+        existing_duplicates_ignored: importStats.existingCount,
+        invalid_ignored: importStats.invalidCount
       });
 
-      addToast(`${formatted.length} leads importados com sucesso!`, 'success');
+      let msg = `${itemsToInsert.length} novo(s) lead(s) importado(s) com sucesso!`;
+      if (importStats.existingCount > 0) {
+        msg += ` (${importStats.existingCount} duplicados ignorados)`;
+      }
+      addToast(msg, 'success');
+
       setShowImportModal(false);
       setImportFile(null);
       setImportPreview([]);
+      setImportStats(null);
       loadData();
     } catch (err: any) {
       addToast(err.message || 'Erro ao importar leads', 'error');
@@ -315,8 +371,11 @@ export const LeadsView: React.FC = () => {
       Telefone: c.telefone,
       Observacoes: c.observacoes || '',
       Origem: c.origem || '',
-      Status: !c.assignment ? 'Livre' : c.assignment.status,
-      Revendedor: c.assignment?.reseller?.nome_completo || c.assignment?.reseller?.email || 'Não distribuído',
+      Status: c.assignments.length === 0 ? 'Livre' : c.assignments.map((a) => a.status).join('; '),
+      Revendedores: c.assignments.length === 0
+        ? 'Não distribuído'
+        : c.assignments.map((a) => a.reseller?.nome_completo || a.reseller?.email).join('; '),
+      TotalRevendedores: c.assignments.length,
       DataCadastro: new Date(c.created_at).toLocaleDateString('pt-BR')
     }));
 
@@ -332,94 +391,130 @@ export const LeadsView: React.FC = () => {
     addToast('Arquivo CSV exportado com sucesso', 'success');
   };
 
-  // Distribution Algorithm (Smart Equal / Quota Distribution)
+  // Distribution / Multi-reseller Assignment Algorithm
   const handleDistributeLeads = async () => {
     if (resellers.length === 0) {
       addToast('Não há revendedores ativos cadastrados para receber leads.', 'warning');
       return;
     }
 
+    if (selectedResellerIds.length === 0) {
+      addToast('Selecione pelo menos um revendedor na lista.', 'warning');
+      return;
+    }
+
+    const targetLeads = selectedLeadIds.length > 0
+      ? contacts.filter((c) => selectedLeadIds.includes(c.id))
+      : contacts;
+
+    if (targetLeads.length === 0) {
+      addToast('Nenhum lead disponível para a atribuição.', 'warning');
+      return;
+    }
+
     setDistributing(true);
     try {
-      let leadsToDistribute: ContactWithAssignment[] = [];
-      let ignoredAlreadyAssignedCount = 0;
+      // Buscar assignments existentes no banco para checar duplicidade de (contact_id, user_id)
+      const { data: existingData, error: fetchErr } = await supabase
+        .from('contact_assignments')
+        .select('contact_id, user_id');
 
-      if (selectedLeadIds.length > 0) {
-        const selectedList = contacts.filter((c) => selectedLeadIds.includes(c.id));
-        const freeList = selectedList.filter((c) => !c.assignment);
-        const assignedList = selectedList.filter((c) => !!c.assignment);
+      if (fetchErr) throw fetchErr;
 
-        if (freeList.length === 0) {
+      const existingSet = new Set<string>();
+      (existingData || []).forEach((item: any) => {
+        existingSet.add(`${item.contact_id}:${item.user_id}`);
+      });
+
+      const toInsert: {
+        contact_id: string;
+        user_id: string;
+        status: string;
+        assigned_at: string;
+      }[] = [];
+
+      let alreadyExistsCount = 0;
+
+      if (distributionMode === 'assign_all') {
+        // Modo A: Atribuir para todos os revendedores selecionados (produto cartesiano)
+        for (const lead of targetLeads) {
+          for (const resellerId of selectedResellerIds) {
+            const key = `${lead.id}:${resellerId}`;
+            if (existingSet.has(key)) {
+              alreadyExistsCount++;
+            } else {
+              existingSet.add(key); // Evita duplicata interna no lote
+              toInsert.push({
+                contact_id: lead.id,
+                user_id: resellerId,
+                status: 'novo',
+                assigned_at: new Date().toISOString()
+              });
+            }
+          }
+        }
+      } else {
+        // Modo B: Distribuir alternadamente entre os revendedores selecionados (Round Robin)
+        let rIndex = 0;
+        for (const lead of targetLeads) {
+          const targetResellerId = selectedResellerIds[rIndex % selectedResellerIds.length];
+          rIndex++;
+
+          const key = `${lead.id}:${targetResellerId}`;
+          if (existingSet.has(key)) {
+            alreadyExistsCount++;
+          } else {
+            existingSet.add(key);
+            toInsert.push({
+              contact_id: lead.id,
+              user_id: targetResellerId,
+              status: 'novo',
+              assigned_at: new Date().toISOString()
+            });
+          }
+        }
+      }
+
+      if (toInsert.length === 0) {
+        if (alreadyExistsCount > 0) {
           addToast(
-            `Todos os ${selectedLeadIds.length} lead(s) selecionado(s) já possuem revendedor atribuído. Selecione leads com status "Livre" para distribuir.`,
-            'warning'
+            'Todos os leads selecionados já estão atribuídos aos revendedores selecionados.',
+            'info'
           );
-          setDistributing(false);
-          return;
+        } else {
+          addToast('Nenhuma nova atribuição necessária.', 'info');
         }
-
-        leadsToDistribute = freeList;
-        ignoredAlreadyAssignedCount = assignedList.length;
-      } else {
-        leadsToDistribute = contacts.filter((c) => !c.assignment);
-        if (leadsToDistribute.length === 0) {
-          addToast('Não há nenhum lead livre disponível para distribuição.', 'warning');
-          setDistributing(false);
-          return;
-        }
+        setShowDistributeModal(false);
+        return;
       }
 
-      const assignmentsToInsert: any[] = [];
-
-      if (distributeTargetReseller === 'auto') {
-        // Round-robin distribution across active resellers
-        let resellerIndex = 0;
-        leadsToDistribute.forEach((lead) => {
-          const targetReseller = resellers[resellerIndex % resellers.length];
-          assignmentsToInsert.push({
-            contact_id: lead.id,
-            user_id: targetReseller.id,
-            status: 'novo',
-            assigned_at: new Date().toISOString()
-          });
-          resellerIndex++;
-        });
-      } else {
-        // Assign all to specific reseller
-        leadsToDistribute.forEach((lead) => {
-          assignmentsToInsert.push({
-            contact_id: lead.id,
-            user_id: distributeTargetReseller,
-            status: 'novo',
-            assigned_at: new Date().toISOString()
-          });
-        });
-      }
-
-      // Insert assignments in chunks
-      for (let i = 0; i < assignmentsToInsert.length; i += 100) {
-        const chunk = assignmentsToInsert.slice(i, i + 100);
+      // Inserir novos assignments em lotes de 100
+      for (let i = 0; i < toInsert.length; i += 100) {
+        const chunk = toInsert.slice(i, i + 100);
         const { error } = await supabase.from('contact_assignments').insert(chunk);
         if (error) throw error;
       }
 
       await logAuditEvent('distribute_leads', {
-        count: assignmentsToInsert.length,
-        mode: distributeTargetReseller === 'auto' ? 'round_robin' : 'single_reseller',
-        target: distributeTargetReseller,
-        ignored_already_assigned: ignoredAlreadyAssignedCount
+        count: toInsert.length,
+        mode: distributionMode,
+        resellers_count: selectedResellerIds.length,
+        target_leads: targetLeads.length,
+        ignored_existing: alreadyExistsCount
       });
 
-      const successMsg = ignoredAlreadyAssignedCount > 0
-        ? `${assignmentsToInsert.length} lead(s) distribuído(s) com sucesso! (${ignoredAlreadyAssignedCount} lead(s) já atribuído(s) foram ignorados)`
-        : `${assignmentsToInsert.length} lead(s) distribuído(s) com sucesso!`;
+      let msg = `${toInsert.length} nova(s) atribuição(ões) realizada(s).`;
+      if (alreadyExistsCount > 0) {
+        msg += ` ${alreadyExistsCount} combinação(ões) já existia(m) e foi(ram) ignorada(s).`;
+      }
 
-      addToast(successMsg, 'success');
+      addToast(msg, 'success');
       setShowDistributeModal(false);
       setSelectedLeadIds([]);
+      setSelectedResellerIds([]);
       loadData();
     } catch (err: any) {
-      addToast(err.message || 'Erro ao distribuir leads', 'error');
+      addToast(err.message || 'Erro ao atribuir leads', 'error');
     } finally {
       setDistributing(false);
     }
@@ -450,7 +545,7 @@ export const LeadsView: React.FC = () => {
             <Layers className="w-6 h-6 text-brand-red" /> Gestão e Distribuição de Leads
           </h1>
           <p className="text-xs text-slate-500 dark:text-zinc-400 mt-0.5">
-            Importe listas CSV/Excel, gerencie o funil e faça a distribuição automática para revendedores.
+            Importe listas CSV/Excel, gerencie o funil e atribua o mesmo lead para múltiplos revendedores.
           </p>
         </div>
 
@@ -458,27 +553,32 @@ export const LeadsView: React.FC = () => {
           <button
             onClick={loadData}
             disabled={loading}
-            className="p-2 text-xs font-semibold rounded-xl border border-brand-lightBorder dark:border-brand-darkBorder bg-white dark:bg-brand-darkCard text-slate-700 dark:text-zinc-300 flex items-center gap-1.5 shadow-sm"
+            className="p-2 text-xs font-semibold rounded-xl border border-brand-lightBorder dark:border-brand-darkBorder bg-white dark:bg-brand-darkCard text-slate-700 dark:text-zinc-300 flex items-center gap-1.5 shadow-sm hover:bg-slate-50 dark:hover:bg-brand-dark"
           >
             <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
           </button>
           <button
             onClick={() => setShowImportModal(true)}
-            className="px-3 py-2 text-xs font-bold rounded-xl border border-brand-lightBorder dark:border-brand-darkBorder bg-white dark:bg-brand-darkCard hover:bg-slate-50 text-slate-700 dark:text-zinc-300 flex items-center gap-1.5 shadow-sm"
+            className="px-3 py-2 text-xs font-bold rounded-xl border border-brand-lightBorder dark:border-brand-darkBorder bg-white dark:bg-brand-darkCard hover:bg-slate-50 dark:hover:bg-brand-dark text-slate-700 dark:text-zinc-300 flex items-center gap-1.5 shadow-sm"
           >
             <Upload className="w-3.5 h-3.5 text-blue-500" /> Importar Planilha
           </button>
           <button
             onClick={handleExportCSV}
-            className="px-3 py-2 text-xs font-bold rounded-xl border border-brand-lightBorder dark:border-brand-darkBorder bg-white dark:bg-brand-darkCard hover:bg-slate-50 text-slate-700 dark:text-zinc-300 flex items-center gap-1.5 shadow-sm"
+            className="px-3 py-2 text-xs font-bold rounded-xl border border-brand-lightBorder dark:border-brand-darkBorder bg-white dark:bg-brand-darkCard hover:bg-slate-50 dark:hover:bg-brand-dark text-slate-700 dark:text-zinc-300 flex items-center gap-1.5 shadow-sm"
           >
             <Download className="w-3.5 h-3.5 text-emerald-500" /> Exportar CSV
           </button>
           <button
-            onClick={() => setShowDistributeModal(true)}
+            onClick={() => {
+              if (selectedResellerIds.length === 0 && resellers.length > 0) {
+                setSelectedResellerIds(resellers.map((r) => r.id));
+              }
+              setShowDistributeModal(true);
+            }}
             className="px-3.5 py-2 bg-brand-red hover:bg-brand-redHover text-white rounded-xl text-xs font-bold flex items-center gap-1.5 shadow-sm"
           >
-            <Zap className="w-4 h-4" /> Distribuir ({unassignedCount} livres)
+            <Zap className="w-4 h-4" /> Atribuir / Distribuir Leads
           </button>
           <button
             onClick={() => setShowCreateModal(true)}
@@ -561,10 +661,15 @@ export const LeadsView: React.FC = () => {
           </span>
           <div className="flex items-center gap-2">
             <button
-              onClick={() => setShowDistributeModal(true)}
+              onClick={() => {
+                if (selectedResellerIds.length === 0 && resellers.length > 0) {
+                  setSelectedResellerIds(resellers.map((r) => r.id));
+                }
+                setShowDistributeModal(true);
+              }}
               className="px-3 py-1.5 bg-brand-red text-white text-xs font-bold rounded-xl hover:bg-brand-redHover flex items-center gap-1.5"
             >
-              <Share2 className="w-3.5 h-3.5" /> Distribuir Selecionados
+              <Share2 className="w-3.5 h-3.5" /> Atribuir Selecionados
             </button>
             <button
               onClick={() => handleDeleteLeads(selectedLeadIds)}
@@ -593,7 +698,7 @@ export const LeadsView: React.FC = () => {
                 <th className="py-3 px-4">Lead / Contato</th>
                 <th className="py-3 px-4">Telefone / WhatsApp</th>
                 <th className="py-3 px-4">Status no Funil</th>
-                <th className="py-3 px-4">Revendedor Responsável</th>
+                <th className="py-3 px-4">Revendedor(es) Responsável(is)</th>
                 <th className="py-3 px-4">Observações</th>
                 <th className="py-3 px-4 text-right">Ações</th>
               </tr>
@@ -633,39 +738,86 @@ export const LeadsView: React.FC = () => {
                       {c.telefone}
                     </td>
                     <td className="py-3.5 px-4">
-                      <StatusBadge
-                        status={c.assignment?.status || 'unassigned'}
-                        text={
-                          !c.assignment
-                            ? 'Livre'
-                            : c.assignment.status === 'novo'
-                            ? 'Novo'
-                            : c.assignment.status === 'pendente'
-                            ? 'Em Atendimento'
-                            : 'Venda Concluída'
-                        }
-                      />
+                      {c.assignments.length === 0 ? (
+                        <StatusBadge status="unassigned" text="Livre" />
+                      ) : c.assignments.length === 1 ? (
+                        <StatusBadge
+                          status={c.assignments[0].status}
+                          text={
+                            c.assignments[0].status === 'novo'
+                              ? 'Novo'
+                              : c.assignments[0].status === 'pendente'
+                              ? 'Em Atendimento'
+                              : 'Venda Concluída'
+                          }
+                        />
+                      ) : (
+                        <div className="flex items-center gap-1.5">
+                          <StatusBadge
+                            status={c.assignments[0].status}
+                            text={
+                              c.assignments[0].status === 'novo'
+                                ? 'Novo'
+                                : c.assignments[0].status === 'pendente'
+                                ? 'Em Atendimento'
+                                : 'Venda Concluída'
+                            }
+                          />
+                          <span
+                            className="px-1.5 py-0.5 rounded-md bg-blue-100 dark:bg-blue-950 text-blue-700 dark:text-blue-300 font-black text-[10px]"
+                            title={`${c.assignments.length} revendedores atribuídos`}
+                          >
+                            {c.assignments.length} revendedores
+                          </span>
+                        </div>
+                      )}
                     </td>
                     <td className="py-3.5 px-4">
-                      {c.assignment?.reseller ? (
+                      {c.assignments.length === 0 ? (
+                        <span className="text-slate-400 italic">Não distribuído</span>
+                      ) : c.assignments.length === 1 ? (
                         <span className="font-bold text-slate-900 dark:text-white">
-                          {c.assignment.reseller.nome_completo || c.assignment.reseller.email}
+                          {c.assignments[0].reseller?.nome_completo || c.assignments[0].reseller?.email}
                         </span>
                       ) : (
-                        <span className="text-slate-400 italic">Não distribuído</span>
+                        <div className="flex flex-wrap items-center gap-1.5">
+                          <span className="font-bold text-slate-900 dark:text-white">
+                            {c.assignments[0].reseller?.nome_completo || c.assignments[0].reseller?.email}
+                          </span>
+                          <span
+                            className="px-1.5 py-0.5 rounded-md bg-brand-red/10 text-brand-red font-black text-[10px] cursor-help"
+                            title={c.assignments
+                              .map((a) => a.reseller?.nome_completo || a.reseller?.email || 'Revendedor')
+                              .join(', ')}
+                          >
+                            +{c.assignments.length - 1}
+                          </span>
+                        </div>
                       )}
                     </td>
                     <td className="py-3.5 px-4 max-w-xs truncate text-slate-500">
                       {c.observacoes || '-'}
                     </td>
                     <td className="py-3.5 px-4 text-right">
-                      <button
-                        onClick={() => handleDeleteLeads([c.id])}
-                        className="p-1.5 rounded-lg border border-brand-lightBorder dark:border-brand-darkBorder hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-950/40 transition text-slate-400"
-                        title="Excluir Lead"
-                      >
-                        <Trash2 className="w-3.5 h-3.5" />
-                      </button>
+                      <div className="flex items-center justify-end gap-1.5">
+                        <button
+                          onClick={async () => {
+                            const { openWhatsAppConversation } = await import('../../services/whatsappService');
+                            openWhatsAppConversation({ phone: c.telefone });
+                          }}
+                          className="p-1.5 rounded-lg border border-brand-lightBorder dark:border-brand-darkBorder hover:bg-emerald-50 hover:text-emerald-600 dark:hover:bg-emerald-950/40 transition text-slate-400"
+                          title="Chamar no WhatsApp"
+                        >
+                          <Phone className="w-3.5 h-3.5 text-emerald-500" />
+                        </button>
+                        <button
+                          onClick={() => handleDeleteLeads([c.id])}
+                          className="p-1.5 rounded-lg border border-brand-lightBorder dark:border-brand-darkBorder hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-950/40 transition text-slate-400"
+                          title="Excluir Lead"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
                     </td>
                   </tr>
                 );
@@ -685,98 +837,211 @@ export const LeadsView: React.FC = () => {
         )}
       </div>
 
-      {/* Distribute Modal */}
+      {/* Multi-Reseller Distribute / Assign Modal */}
       {showDistributeModal && (
-        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="bg-white dark:bg-brand-darkCard border border-brand-lightBorder dark:border-brand-darkBorder rounded-2xl w-full max-w-md p-6 shadow-2xl animate-in fade-in zoom-in duration-200">
+        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4 overflow-y-auto">
+          <div className="bg-white dark:bg-brand-darkCard border border-brand-lightBorder dark:border-brand-darkBorder rounded-2xl w-full max-w-lg p-6 shadow-2xl animate-in fade-in zoom-in duration-200 my-8">
             <div className="flex items-center justify-between pb-3 border-b border-brand-lightBorder dark:border-brand-darkBorder">
               <h3 className="text-base font-bold text-slate-900 dark:text-white flex items-center gap-2">
-                <Zap className="w-5 h-5 text-brand-red" /> Distribuir Leads para Revendedores
+                <Zap className="w-5 h-5 text-brand-red" /> Atribuir / Distribuir Leads
               </h3>
-              <button onClick={() => setShowDistributeModal(false)} className="p-1 rounded-lg text-slate-400">
+              <button
+                onClick={() => setShowDistributeModal(false)}
+                className="p-1 rounded-lg text-slate-400 hover:text-slate-600 dark:hover:text-white"
+              >
                 <X className="w-5 h-5" />
               </button>
             </div>
 
             <div className="space-y-4 mt-4 text-xs">
-              {(() => {
-                if (selectedLeadIds.length > 0) {
-                  const selectedList = contacts.filter((c) => selectedLeadIds.includes(c.id));
-                  const freeList = selectedList.filter((c) => !c.assignment);
-                  const assignedList = selectedList.filter((c) => !!c.assignment);
+              {/* Target Summary */}
+              <div className="p-3 rounded-xl bg-slate-50 dark:bg-brand-dark border border-brand-lightBorder dark:border-brand-darkBorder">
+                <p className="text-slate-700 dark:text-zinc-300">
+                  {selectedLeadIds.length > 0 ? (
+                    <>
+                      Operação com <b>{selectedLeadIds.length}</b> lead(s) selecionado(s) na tabela.
+                    </>
+                  ) : (
+                    <>
+                      Operação com <b>todos os {contacts.length}</b> lead(s) cadastrados no sistema.
+                    </>
+                  )}
+                </p>
+              </div>
 
-                  return (
-                    <div className="space-y-2">
-                      <p className="text-slate-600 dark:text-zinc-300">
-                        Total selecionado: <b>{selectedLeadIds.length}</b> lead(s) &bull;{' '}
-                        <span className="text-emerald-600 dark:text-emerald-400 font-bold">
-                          {freeList.length} livre(s) para distribuição
-                        </span>
-                      </p>
-                      {assignedList.length > 0 && (
-                        <div className="p-2.5 rounded-xl bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-900/50 text-amber-700 dark:text-amber-400 text-[11px] flex items-center gap-2">
-                          <AlertCircle className="w-4 h-4 shrink-0" />
-                          <span>
-                            {assignedList.length} lead(s) já possuem revendedor atribuído e não serão duplicados.
-                          </span>
-                        </div>
-                      )}
-                      {freeList.length === 0 && (
-                        <div className="p-2.5 rounded-xl bg-red-50 dark:bg-red-950/40 border border-red-200 dark:border-red-900/50 text-red-700 dark:text-red-400 text-[11px] flex items-center gap-2">
-                          <AlertCircle className="w-4 h-4 shrink-0" />
-                          <span>Nenhum dos leads selecionados está livre. Selecione leads livres para distribuir.</span>
-                        </div>
-                      )}
-                    </div>
-                  );
-                } else {
-                  return (
-                    <p className="text-slate-600 dark:text-zinc-300">
-                      Você está prestes a distribuir todos os <b>{unassignedCount}</b> lead(s) livres disponíveis no sistema.
-                    </p>
-                  );
-                }
-              })()}
-
-              <div>
-                <label className="block font-bold text-slate-700 dark:text-zinc-300 mb-1">
-                  Método de Distribuição:
+              {/* Mode Selection */}
+              <div className="space-y-2">
+                <label className="block font-bold text-slate-700 dark:text-zinc-300">
+                  Escolha o Modo de Atribuição:
                 </label>
-                <select
-                  value={distributeTargetReseller}
-                  onChange={(e) => setDistributeTargetReseller(e.target.value)}
-                  className="w-full p-2.5 rounded-xl border border-brand-lightBorder dark:border-brand-darkBorder bg-slate-50 dark:bg-brand-dark font-bold text-slate-800 dark:text-zinc-200 outline-none"
-                >
-                  <option value="auto">⚡ Distribuir Igualmente entre todos os Revendedores Ativos</option>
-                  <optgroup label="Ou atribuir para um revendedor específico:">
-                    {resellers.map((r) => (
-                      <option key={r.id} value={r.id}>
-                        {r.nome_completo || r.email} (Cota: {r.lead_quota || 20})
-                      </option>
-                    ))}
-                  </optgroup>
-                </select>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                  <div
+                    onClick={() => setDistributionMode('assign_all')}
+                    className={`p-3 rounded-xl border-2 cursor-pointer transition flex flex-col justify-between ${
+                      distributionMode === 'assign_all'
+                        ? 'border-brand-red bg-red-50/50 dark:bg-red-950/20'
+                        : 'border-brand-lightBorder dark:border-brand-darkBorder bg-slate-50 dark:bg-brand-dark hover:border-slate-300'
+                    }`}
+                  >
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="radio"
+                        name="distributionMode"
+                        checked={distributionMode === 'assign_all'}
+                        onChange={() => setDistributionMode('assign_all')}
+                        className="text-brand-red focus:ring-brand-red"
+                      />
+                      <span className="font-bold text-slate-900 dark:text-white">Atribuir para todos</span>
+                    </div>
+                    <p className="text-[11px] text-slate-500 dark:text-zinc-400 mt-1.5 leading-relaxed">
+                      Cada lead selecionado é atribuído a <b>todos</b> os revendedores marcados.
+                    </p>
+                  </div>
+
+                  <div
+                    onClick={() => setDistributionMode('round_robin')}
+                    className={`p-3 rounded-xl border-2 cursor-pointer transition flex flex-col justify-between ${
+                      distributionMode === 'round_robin'
+                        ? 'border-brand-red bg-red-50/50 dark:bg-red-950/20'
+                        : 'border-brand-lightBorder dark:border-brand-darkBorder bg-slate-50 dark:bg-brand-dark hover:border-slate-300'
+                    }`}
+                  >
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="radio"
+                        name="distributionMode"
+                        checked={distributionMode === 'round_robin'}
+                        onChange={() => setDistributionMode('round_robin')}
+                        className="text-brand-red focus:ring-brand-red"
+                      />
+                      <span className="font-bold text-slate-900 dark:text-white">Distribuir entre eles</span>
+                    </div>
+                    <p className="text-[11px] text-slate-500 dark:text-zinc-400 mt-1.5 leading-relaxed">
+                      Divide a lista de leads <b>igualmente</b> (alternado) entre os revendedores marcados.
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              {/* Resellers Selection List with Checkboxes */}
+              <div>
+                <div className="flex items-center justify-between mb-1.5">
+                  <label className="font-bold text-slate-700 dark:text-zinc-300">
+                    Revendedores Selecionados ({selectedResellerIds.length} de {resellers.length}):
+                  </label>
+                  <div className="flex items-center gap-2 text-[11px]">
+                    <button
+                      type="button"
+                      onClick={() => setSelectedResellerIds(resellers.map((r) => r.id))}
+                      className="text-brand-red font-bold hover:underline"
+                    >
+                      Selecionar todos
+                    </button>
+                    <span className="text-slate-300 dark:text-zinc-700">&bull;</span>
+                    <button
+                      type="button"
+                      onClick={() => setSelectedResellerIds([])}
+                      className="text-slate-500 hover:text-slate-700 dark:hover:text-zinc-300 font-medium"
+                    >
+                      Limpar seleção
+                    </button>
+                  </div>
+                </div>
+
+                <div className="max-h-52 overflow-y-auto space-y-1.5 p-2 rounded-xl border border-brand-lightBorder dark:border-brand-darkBorder bg-slate-50/50 dark:bg-brand-dark/50">
+                  {resellers.map((r) => {
+                    const isSelected = selectedResellerIds.includes(r.id);
+                    return (
+                      <div
+                        key={r.id}
+                        onClick={() => {
+                          if (isSelected) {
+                            setSelectedResellerIds(selectedResellerIds.filter((id) => id !== r.id));
+                          } else {
+                            setSelectedResellerIds([...selectedResellerIds, r.id]);
+                          }
+                        }}
+                        className={`p-2.5 rounded-xl border flex items-center justify-between cursor-pointer transition ${
+                          isSelected
+                            ? 'border-brand-red/50 bg-red-50/70 dark:bg-red-950/30 text-slate-900 dark:text-white'
+                            : 'border-brand-lightBorder/50 dark:border-brand-darkBorder/50 bg-white dark:bg-brand-darkCard hover:bg-slate-100 dark:hover:bg-brand-dark text-slate-700 dark:text-zinc-300'
+                        }`}
+                      >
+                        <div className="flex items-center gap-2.5 min-w-0">
+                          <input
+                            type="checkbox"
+                            checked={isSelected}
+                            onChange={() => {}} // event handled by container click
+                            className="rounded border-slate-300 text-brand-red focus:ring-brand-red shrink-0"
+                          />
+                          <div className="w-6 h-6 rounded-md bg-slate-100 dark:bg-brand-dark text-slate-700 dark:text-zinc-300 font-bold flex items-center justify-center text-[10px] shrink-0">
+                            {(r.nome_completo || r.email).charAt(0).toUpperCase()}
+                          </div>
+                          <div className="truncate">
+                            <p className="font-bold truncate text-xs">{r.nome_completo || r.email}</p>
+                            <p className="text-[10px] text-slate-400 truncate">{r.email}</p>
+                          </div>
+                        </div>
+                        <span className="text-[10px] font-bold px-2 py-0.5 rounded-lg bg-slate-100 dark:bg-brand-dark text-slate-500 shrink-0 ml-2">
+                          Cota: {r.lead_quota || 20}
+                        </span>
+                      </div>
+                    );
+                  })}
+
+                  {resellers.length === 0 && (
+                    <p className="text-center text-slate-400 py-4 text-xs">
+                      Nenhum revendedor ativo disponível no sistema.
+                    </p>
+                  )}
+                </div>
+              </div>
+
+              {/* Information & Projection Feedback */}
+              <div className="p-3 rounded-xl bg-slate-100 dark:bg-brand-dark border border-brand-lightBorder dark:border-brand-darkBorder text-[11px] text-slate-600 dark:text-zinc-300 space-y-1">
+                <p>
+                  ⚡ Projeção:{' '}
+                  <b>
+                    {distributionMode === 'assign_all'
+                      ? (selectedLeadIds.length > 0 ? selectedLeadIds.length : contacts.length) * selectedResellerIds.length
+                      : (selectedLeadIds.length > 0 ? selectedLeadIds.length : contacts.length)}
+                  </b>{' '}
+                  atribuição(ões) potencial(is).
+                </p>
+                <p className="text-[10px] text-slate-400">
+                  {distributionMode === 'assign_all'
+                    ? 'Combinações que já existiam anteriormente serão preservadas sem duplicação.'
+                    : `Aproximadamente ${
+                        selectedResellerIds.length > 0
+                          ? Math.ceil(
+                              (selectedLeadIds.length > 0 ? selectedLeadIds.length : contacts.length) /
+                                selectedResellerIds.length
+                            )
+                          : 0
+                      } lead(s) para cada revendedor marcado.`}
+                </p>
               </div>
 
               <div className="flex justify-end gap-2 pt-3 border-t border-brand-lightBorder dark:border-brand-darkBorder">
                 <button
                   type="button"
                   onClick={() => setShowDistributeModal(false)}
-                  className="px-4 py-2 rounded-xl border border-brand-lightBorder dark:border-brand-darkBorder text-slate-600 dark:text-zinc-300 font-bold"
+                  className="px-4 py-2 rounded-xl border border-brand-lightBorder dark:border-brand-darkBorder text-slate-600 dark:text-zinc-300 font-bold hover:bg-slate-50 dark:hover:bg-brand-dark"
                 >
                   Cancelar
                 </button>
                 <button
                   onClick={handleDistributeLeads}
-                  disabled={
-                    distributing ||
-                    (selectedLeadIds.length > 0
-                      ? contacts.filter((c) => selectedLeadIds.includes(c.id) && !c.assignment).length === 0
-                      : unassignedCount === 0)
-                  }
+                  disabled={distributing || selectedResellerIds.length === 0}
                   className="px-4 py-2 rounded-xl bg-brand-red hover:bg-brand-redHover text-white font-bold disabled:opacity-50 flex items-center gap-2"
                 >
-                  {distributing ? 'Distribuindo...' : 'Confirmar Distribuição'}
+                  {distributing ? (
+                    <>
+                      <RefreshCw className="w-4 h-4 animate-spin" /> Atribuindo...
+                    </>
+                  ) : (
+                    'Confirmar Atribuição'
+                  )}
                 </button>
               </div>
             </div>
@@ -784,13 +1049,13 @@ export const LeadsView: React.FC = () => {
         </div>
       )}
 
-      {/* Import Modal */}
+      {/* Import Modal with CSV / XLSX / TXT / VCF Parser & Verification */}
       {showImportModal && (
-        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="bg-white dark:bg-brand-darkCard border border-brand-lightBorder dark:border-brand-darkBorder rounded-2xl w-full max-w-lg p-6 shadow-2xl animate-in fade-in zoom-in duration-200">
+        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4 overflow-y-auto">
+          <div className="bg-white dark:bg-brand-darkCard border border-brand-lightBorder dark:border-brand-darkBorder rounded-2xl w-full max-w-lg p-6 shadow-2xl animate-in fade-in zoom-in duration-200 my-8">
             <div className="flex items-center justify-between pb-3 border-b border-brand-lightBorder dark:border-brand-darkBorder">
               <h3 className="text-base font-bold text-slate-900 dark:text-white flex items-center gap-2">
-                <Upload className="w-5 h-5 text-blue-500" /> Importar Planilha de Leads
+                <Upload className="w-5 h-5 text-blue-500" /> Importar Contatos / Leads
               </h3>
               <button onClick={() => setShowImportModal(false)} className="p-1 rounded-lg text-slate-400">
                 <X className="w-5 h-5" />
@@ -799,7 +1064,7 @@ export const LeadsView: React.FC = () => {
 
             <div className="space-y-4 mt-4 text-xs">
               <p className="text-slate-500">
-                Selecione um arquivo <b>.CSV</b> ou <b>.XLSX</b> contendo as colunas de <code>Nome</code> e <code>Telefone</code>.
+                Selecione arquivos <b>.CSV</b>, <b>.XLSX</b>, <b>.TXT</b> ou <b>.VCF (vCard)</b>. Os números de telefone serão automaticamente normalizados no padrão brasileiro com DDD.
               </p>
 
               <div
@@ -808,22 +1073,43 @@ export const LeadsView: React.FC = () => {
               >
                 <Upload className="w-8 h-8 text-slate-400 mx-auto mb-2" />
                 <p className="font-bold text-slate-700 dark:text-zinc-300">
-                  {importFile ? importFile.name : 'Clique para selecionar o arquivo do seu computador'}
+                  {importFile ? importFile.name : 'Clique para selecionar o arquivo do seu dispositivo'}
                 </p>
-                <p className="text-[10px] text-slate-400 mt-1">Formatos suportados: CSV, XLSX, XLS</p>
+                <p className="text-[10px] text-slate-400 mt-1">Formatos suportados: CSV, XLSX, XLS, TXT, VCF</p>
                 <input
                   ref={fileInputRef}
                   type="file"
-                  accept=".csv, .xlsx, .xls"
+                  accept=".csv, .xlsx, .xls, .txt, .vcf"
                   onChange={handleFileChange}
                   className="hidden"
                 />
               </div>
 
+              {importStats && (
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 pt-2">
+                  <div className="p-2.5 rounded-xl bg-slate-100 dark:bg-brand-dark text-center border border-brand-lightBorder dark:border-brand-darkBorder">
+                    <p className="text-[10px] text-slate-400 font-bold uppercase">Lidos</p>
+                    <p className="text-base font-black text-slate-900 dark:text-white">{importStats.total}</p>
+                  </div>
+                  <div className="p-2.5 rounded-xl bg-emerald-500/10 text-center border border-emerald-500/20 text-emerald-600 dark:text-emerald-400">
+                    <p className="text-[10px] font-bold uppercase">Novos Válidos</p>
+                    <p className="text-base font-black">{importStats.validNew.length}</p>
+                  </div>
+                  <div className="p-2.5 rounded-xl bg-amber-500/10 text-center border border-amber-500/20 text-amber-600 dark:text-amber-400">
+                    <p className="text-[10px] font-bold uppercase">Duplicados</p>
+                    <p className="text-base font-black">{importStats.existingCount}</p>
+                  </div>
+                  <div className="p-2.5 rounded-xl bg-red-500/10 text-center border border-red-500/20 text-red-600 dark:text-red-400">
+                    <p className="text-[10px] font-bold uppercase">Inválidos</p>
+                    <p className="text-base font-black">{importStats.invalidCount}</p>
+                  </div>
+                </div>
+              )}
+
               {importPreview.length > 0 && (
                 <div>
                   <h4 className="font-bold text-slate-700 dark:text-zinc-300 mb-1">
-                    Prévia das primeiras 5 linhas:
+                    Prévia dos primeiros registros:
                   </h4>
                   <div className="bg-slate-100 dark:bg-brand-dark p-2 rounded-xl text-[10px] font-mono overflow-x-auto max-h-32">
                     <pre>{JSON.stringify(importPreview, null, 2)}</pre>
@@ -835,16 +1121,16 @@ export const LeadsView: React.FC = () => {
                 <button
                   type="button"
                   onClick={() => setShowImportModal(false)}
-                  className="px-4 py-2 rounded-xl border border-brand-lightBorder dark:border-brand-darkBorder text-slate-600 dark:text-zinc-300 font-bold"
+                  className="px-4 py-2 rounded-xl border border-brand-lightBorder dark:border-brand-darkBorder text-slate-600 dark:text-zinc-300 font-bold hover:bg-slate-50 dark:hover:bg-brand-dark"
                 >
                   Cancelar
                 </button>
                 <button
                   onClick={handleExecuteImport}
-                  disabled={!importFile || importLoading}
-                  className="px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-bold disabled:opacity-50 flex items-center gap-2"
+                  disabled={!importStats || importStats.validNew.length === 0 || importLoading}
+                  className="px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-bold disabled:opacity-50 flex items-center gap-2 shadow-sm"
                 >
-                  {importLoading ? 'Processando...' : 'Iniciar Importação'}
+                  {importLoading ? 'Processando...' : `Importar ${importStats ? importStats.validNew.length : ''} Novos Leads`}
                 </button>
               </div>
             </div>

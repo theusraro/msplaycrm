@@ -1,5 +1,6 @@
 import { defineConfig, loadEnv, Plugin } from 'vite';
 import react from '@vitejs/plugin-react';
+import { VitePWA } from 'vite-plugin-pwa';
 
 function apiDevPlugin(): Plugin {
   return {
@@ -59,7 +60,92 @@ export default defineConfig(({ mode }) => {
   Object.assign(process.env, env);
 
   return {
-    plugins: [react(), apiDevPlugin()],
+    plugins: [
+      react(),
+      apiDevPlugin(),
+      VitePWA({
+        registerType: 'prompt',
+        includeAssets: ['favicon.svg', 'icons/*.{png,svg}'],
+        manifest: {
+          name: 'MSPLAY CRM',
+          short_name: 'MSPLAY',
+          description: 'CRM Inteligente e Gestão Comercial MSPLAY',
+          theme_color: '#0a0a0a',
+          background_color: '#0a0a0a',
+          display: 'standalone',
+          orientation: 'portrait',
+          start_url: '/',
+          scope: '/',
+          icons: [
+            {
+              src: '/icons/pwa-192x192.png',
+              sizes: '192x192',
+              type: 'image/png'
+            },
+            {
+              src: '/icons/pwa-512x512.png',
+              sizes: '512x512',
+              type: 'image/png'
+            },
+            {
+              src: '/icons/maskable-icon-512x512.png',
+              sizes: '512x512',
+              type: 'image/png',
+              purpose: 'maskable'
+            }
+          ]
+        },
+        workbox: {
+          globPatterns: ['**/*.{js,css,html,ico,png,svg,webp,woff,woff2}'],
+          navigateFallback: '/index.html',
+          navigateFallbackDenylist: [/^\/api/],
+          runtimeCaching: [
+            {
+              // Google Fonts Stylesheets
+              urlPattern: /^https:\/\/fonts\.googleapis\.com\/.*/i,
+              handler: 'StaleWhileRevalidate',
+              options: {
+                cacheName: 'google-fonts-stylesheets'
+              }
+            },
+            {
+              // Google Fonts Webfonts
+              urlPattern: /^https:\/\/fonts\.gstatic\.com\/.*/i,
+              handler: 'CacheFirst',
+              options: {
+                cacheName: 'google-fonts-webfonts',
+                expiration: {
+                  maxEntries: 30,
+                  maxAgeSeconds: 60 * 60 * 24 * 365
+                }
+              }
+            },
+            {
+              // Static images
+              urlPattern: /\.(?:png|jpg|jpeg|svg|gif|webp)$/,
+              handler: 'StaleWhileRevalidate',
+              options: {
+                cacheName: 'static-images',
+                expiration: {
+                  maxEntries: 60,
+                  maxAgeSeconds: 30 * 24 * 60 * 60
+                }
+              }
+            },
+            {
+              // NEVER cache Supabase API data or Auth tokens
+              urlPattern: /^https:\/\/.*\.supabase\.co\/.*/i,
+              handler: 'NetworkOnly'
+            },
+            {
+              // NEVER cache serverless functions
+              urlPattern: /^\/api\/.*/i,
+              handler: 'NetworkOnly'
+            }
+          ]
+        }
+      })
+    ],
     build: {
       rollupOptions: {
         output: {

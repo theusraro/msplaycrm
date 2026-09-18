@@ -88,12 +88,22 @@ const AppRoutes: React.FC = () => {
   );
 };
 
+import { OfflineBanner } from './components/ui/OfflineScreen';
+import { UpdatePrompt } from './components/pwa/UpdatePrompt';
+import { InstallPrompt } from './components/pwa/InstallPrompt';
+import { useOnlineStatus } from './hooks/useOnlineStatus';
+
 export default function App() {
+  const isOnline = useOnlineStatus();
+
   return (
     <ThemeProvider>
       <AuthProvider>
         <ToastProvider>
           <BrowserRouter>
+            {!isOnline && <OfflineBanner />}
+            <InstallPrompt />
+            <UpdatePrompt />
             <AppRoutes />
           </BrowserRouter>
         </ToastProvider>
@@ -101,3 +111,4 @@ export default function App() {
     </ThemeProvider>
   );
 }
+

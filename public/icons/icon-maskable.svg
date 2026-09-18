@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
+  <rect width="512" height="512" rx="0" fill="#0a0a0a"/>
+  <circle cx="256" cy="256" r="215.04" fill="#18181b" stroke="#27272a" stroke-width="7.68"/>
+  <circle cx="256" cy="256" r="194.56" fill="none" stroke="#ef4444" stroke-width="10.24" stroke-dasharray="76.8 25.6"/>
+  <path d="M194.56 163.84 L358.4 256 L194.56 348.16 Z" fill="#ef4444" stroke="#ffffff" stroke-width="10.24" stroke-linejoin="round"/>
+  <text x="256" y="430.08" fill="#ffffff" font-family="system-ui, -apple-system, sans-serif" font-weight="900" font-size="66.56" text-anchor="middle">MSPLAY</text>
+</svg>
