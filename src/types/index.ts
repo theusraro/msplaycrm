@@ -19,7 +19,7 @@ export interface Profile {
   telefone?: string | null;
   whatsapp?: string | null;
   lead_quota?: number;
-  status_admin?: ResellerAdminStatus;
+  admin_status?: ResellerAdminStatus;
   theme_preference?: 'dark' | 'light';
   last_activity_at?: string | null;
   created_at: string;

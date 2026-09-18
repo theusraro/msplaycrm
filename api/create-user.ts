@@ -54,8 +54,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       telefone,
       whatsapp: telefone,
       role: role === 'admin' ? 'reseller' : role,
-      status: 'active',
-      status_admin: 'ativo',
+      admin_status: 'ativo',
       lead_quota: Number(lead_quota) || 20,
       ativo: true,
       updated_at: new Date().toISOString()

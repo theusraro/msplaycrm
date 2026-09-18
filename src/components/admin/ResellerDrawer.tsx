@@ -122,7 +122,7 @@ export const ResellerDrawer: React.FC<ResellerDrawerProps> = ({
   };
 
   const handleToggleSuspension = async () => {
-    const isCurrentlyActive = profile.ativo ?? (profile.status_admin === 'ativo');
+    const isCurrentlyActive = profile.ativo ?? (profile.admin_status === 'ativo');
     const newAtivo = !isCurrentlyActive;
     const newAdminStatus: 'ativo' | 'suspenso' = newAtivo ? 'ativo' : 'suspenso';
 
@@ -132,7 +132,7 @@ export const ResellerDrawer: React.FC<ResellerDrawerProps> = ({
     } else {
       await supabase
         .from('profiles')
-        .update({ ativo: newAtivo, status_admin: newAdminStatus })
+        .update({ ativo: newAtivo, admin_status: newAdminStatus })
         .eq('id', profile.id);
     }
     if (onUpdate) onUpdate();
@@ -393,12 +393,12 @@ export const ResellerDrawer: React.FC<ResellerDrawerProps> = ({
                   onClick={handleToggleSuspension}
                   disabled={isUpdating}
                   className={`flex items-center gap-2 rounded-xl px-4 py-2 text-xs font-bold text-white shadow-lg transition ${
-                    !profile.ativo || profile.status_admin === 'suspenso'
+                    !profile.ativo || profile.admin_status === 'suspenso'
                       ? 'bg-emerald-600 hover:bg-emerald-500'
                       : 'bg-rose-600 hover:bg-rose-500'
                   }`}
                 >
-                  {!profile.ativo || profile.status_admin === 'suspenso' ? (
+                  {!profile.ativo || profile.admin_status === 'suspenso' ? (
                     <>
                       <UserCheck className="w-4 h-4" /> Reativar Acesso do Revendedor
                     </>
