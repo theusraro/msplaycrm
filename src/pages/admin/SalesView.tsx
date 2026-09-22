@@ -6,6 +6,8 @@ import { StatusBadge } from '../../components/ui/StatusBadge';
 import { EmptyState } from '../../components/ui/EmptyState';
 import { logAuditEvent } from '../../services/auditService';
 import { Sale, Profile, Contact } from '../../types';
+import { useAuth } from '../../contexts/AuthContext';
+import { AddSaleModal } from '../../components/sales/AddSaleModal';
 import Papa from 'papaparse';
 import {
   DollarSign,
@@ -22,6 +24,7 @@ import {
 } from 'lucide-react';
 
 export const SalesView: React.FC = () => {
+  const { user, isAdmin } = useAuth();
   const { addToast } = useToast();
   const [loading, setLoading] = useState(true);
   const [sales, setSales] = useState<Sale[]>([]);
@@ -33,17 +36,8 @@ export const SalesView: React.FC = () => {
   const [dateFilter, setDateFilter] = useState<'all' | '7d' | '30d' | 'this_month'>('all');
   const [resellerFilter, setResellerFilter] = useState<string>('all');
 
-  // Modals
-  const [showCreateModal, setShowCreateModal] = useState(false);
-  const [newSaleData, setNewSaleData] = useState({
-    user_id: '',
-    contact_id: '',
-    valor: '',
-    plano: 'Mensal Padrão',
-    metodo_pagamento: 'pix',
-    observacoes: ''
-  });
-  const [saving, setSaving] = useState(false);
+  // Modal Adicionar Venda
+  const [showAddSaleModal, setShowAddSaleModal] = useState(false);
 
   const loadData = async () => {
     setLoading(true);
@@ -107,64 +101,6 @@ export const SalesView: React.FC = () => {
   const totalCount = filteredSales.length;
   const avgTicket = totalCount > 0 ? totalRevenue / totalCount : 0;
 
-  const handleCreateSale = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!newSaleData.valor || !newSaleData.user_id) {
-      addToast('Revendedor e valor são obrigatórios', 'warning');
-      return;
-    }
-
-    setSaving(true);
-    try {
-      const payload: any = {
-        user_id: newSaleData.user_id,
-        valor: parseFloat(newSaleData.valor.replace(',', '.')),
-        plano: newSaleData.plano,
-        metodo_pagamento: newSaleData.metodo_pagamento,
-        observacoes: newSaleData.observacoes || null
-      };
-
-      if (newSaleData.contact_id) {
-        payload.contact_id = newSaleData.contact_id;
-      }
-
-      const { data, error } = await supabase.from('sales').insert([payload]).select().single();
-      if (error) throw error;
-
-      // Also update contact assignment to 'concluido' if contact specified
-      if (newSaleData.contact_id) {
-        await supabase
-          .from('contact_assignments')
-          .update({ status: 'concluido' })
-          .eq('contact_id', newSaleData.contact_id)
-          .eq('user_id', newSaleData.user_id);
-      }
-
-      await logAuditEvent('create_sale', {
-        sale_id: data.id,
-        user_id: newSaleData.user_id,
-        valor: payload.valor,
-        plano: payload.plano
-      });
-
-      addToast('Venda registrada com sucesso!', 'success');
-      setShowCreateModal(false);
-      setNewSaleData({
-        user_id: '',
-        contact_id: '',
-        valor: '',
-        plano: 'Mensal Padrão',
-        metodo_pagamento: 'pix',
-        observacoes: ''
-      });
-      loadData();
-    } catch (err: any) {
-      addToast(err.message || 'Erro ao registrar venda', 'error');
-    } finally {
-      setSaving(false);
-    }
-  };
-
   const handleExportCSV = () => {
     const exportData = filteredSales.map((s) => ({
       ID: s.id,
@@ -217,10 +153,10 @@ export const SalesView: React.FC = () => {
             <Download className="w-3.5 h-3.5 text-emerald-500" /> Exportar Vendas
           </button>
           <button
-            onClick={() => setShowCreateModal(true)}
-            className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold flex items-center gap-2 shadow-sm"
+            onClick={() => setShowAddSaleModal(true)}
+            className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-black flex items-center gap-2 shadow-sm transition active:scale-[0.98]"
           >
-            <Plus className="w-4 h-4" /> Registrar Venda
+            <Plus className="w-4 h-4" /> + Adicionar venda
           </button>
         </div>
       </div>
@@ -364,129 +300,22 @@ export const SalesView: React.FC = () => {
             icon={<DollarSign className="w-8 h-8 text-slate-400" />}
             title="Nenhuma venda encontrada"
             description="Nenhuma transação foi registrada no período selecionado."
-            actionLabel="Registrar Venda Manual"
-            onAction={() => setShowCreateModal(true)}
+            actionLabel="+ Adicionar venda"
+            onAction={() => setShowAddSaleModal(true)}
           />
         )}
       </div>
 
-      {/* Create Sale Modal */}
-      {showCreateModal && (
-        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="bg-white dark:bg-brand-darkCard border border-brand-lightBorder dark:border-brand-darkBorder rounded-2xl w-full max-w-md p-6 shadow-2xl animate-in fade-in zoom-in duration-200">
-            <div className="flex items-center justify-between pb-3 border-b border-brand-lightBorder dark:border-brand-darkBorder">
-              <h3 className="text-base font-bold text-slate-900 dark:text-white flex items-center gap-2">
-                <Plus className="w-5 h-5 text-emerald-500" /> Registrar Nova Venda
-              </h3>
-              <button onClick={() => setShowCreateModal(false)} className="p-1 rounded-lg text-slate-400">
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-
-            <form onSubmit={handleCreateSale} className="space-y-4 mt-4 text-xs">
-              <div>
-                <label className="block font-bold text-slate-700 dark:text-zinc-300 mb-1">
-                  Revendedor Responsável
-                </label>
-                <select
-                  required
-                  value={newSaleData.user_id}
-                  onChange={(e) => setNewSaleData({ ...newSaleData, user_id: e.target.value })}
-                  className="w-full p-2.5 rounded-xl border border-brand-lightBorder dark:border-brand-darkBorder bg-slate-50 dark:bg-brand-dark outline-none focus:ring-2 focus:ring-brand-red font-bold"
-                >
-                  <option value="">Selecione o revendedor...</option>
-                  {resellers.map((r) => (
-                    <option key={r.id} value={r.id}>
-                      {r.nome_completo || r.email}
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              <div>
-                <label className="block font-bold text-slate-700 dark:text-zinc-300 mb-1">
-                  Cliente / Lead (Opcional)
-                </label>
-                <select
-                  value={newSaleData.contact_id}
-                  onChange={(e) => setNewSaleData({ ...newSaleData, contact_id: e.target.value })}
-                  className="w-full p-2.5 rounded-xl border border-brand-lightBorder dark:border-brand-darkBorder bg-slate-50 dark:bg-brand-dark outline-none focus:ring-2 focus:ring-brand-red"
-                >
-                  <option value="">Nenhum (Venda Avulsa)</option>
-                  {contacts.map((c) => (
-                    <option key={c.id} value={c.id}>
-                      {c.nome} ({c.telefone})
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block font-bold text-slate-700 dark:text-zinc-300 mb-1">
-                    Valor (R$)
-                  </label>
-                  <input
-                    type="text"
-                    required
-                    placeholder="35.00"
-                    value={newSaleData.valor}
-                    onChange={(e) => setNewSaleData({ ...newSaleData, valor: e.target.value })}
-                    className="w-full p-2.5 rounded-xl border border-brand-lightBorder dark:border-brand-darkBorder bg-slate-50 dark:bg-brand-dark outline-none focus:ring-2 focus:ring-brand-red font-bold"
-                  />
-                </div>
-
-                <div>
-                  <label className="block font-bold text-slate-700 dark:text-zinc-300 mb-1">
-                    Método
-                  </label>
-                  <select
-                    value={newSaleData.metodo_pagamento}
-                    onChange={(e) => setNewSaleData({ ...newSaleData, metodo_pagamento: e.target.value })}
-                    className="w-full p-2.5 rounded-xl border border-brand-lightBorder dark:border-brand-darkBorder bg-slate-50 dark:bg-brand-dark outline-none focus:ring-2 focus:ring-brand-red font-bold"
-                  >
-                    <option value="pix">PIX</option>
-                    <option value="cartao">Cartão de Crédito</option>
-                    <option value="boleto">Boleto</option>
-                    <option value="dinheiro">Dinheiro</option>
-                  </select>
-                </div>
-              </div>
-
-              <div>
-                <label className="block font-bold text-slate-700 dark:text-zinc-300 mb-1">
-                  Plano / Pacote
-                </label>
-                <input
-                  type="text"
-                  required
-                  placeholder="Ex: Mensal Padrão / Trimestral VIP"
-                  value={newSaleData.plano}
-                  onChange={(e) => setNewSaleData({ ...newSaleData, plano: e.target.value })}
-                  className="w-full p-2.5 rounded-xl border border-brand-lightBorder dark:border-brand-darkBorder bg-slate-50 dark:bg-brand-dark outline-none focus:ring-2 focus:ring-brand-red"
-                />
-              </div>
-
-              <div className="flex justify-end gap-2 pt-3 border-t border-brand-lightBorder dark:border-brand-darkBorder">
-                <button
-                  type="button"
-                  onClick={() => setShowCreateModal(false)}
-                  className="px-4 py-2 rounded-xl border border-brand-lightBorder dark:border-brand-darkBorder text-slate-600 dark:text-zinc-300 font-bold"
-                >
-                  Cancelar
-                </button>
-                <button
-                  type="submit"
-                  disabled={saving}
-                  className="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold disabled:opacity-50"
-                >
-                  {saving ? 'Registrando...' : 'Confirmar Venda'}
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
+      {/* Modal Adicionar Venda (Novo ou Existente) */}
+      <AddSaleModal
+        isOpen={showAddSaleModal}
+        onClose={() => setShowAddSaleModal(false)}
+        onSuccess={() => loadData()}
+        resellers={resellers}
+        currentUserId={user?.id || ''}
+        isAdmin={isAdmin}
+        existingContacts={contacts}
+      />
     </div>
   );
 };

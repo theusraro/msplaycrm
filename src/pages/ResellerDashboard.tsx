@@ -23,8 +23,10 @@ import {
   X,
   ExternalLink,
   ChevronDown,
-  MessageCircle
+  MessageCircle,
+  Plus
 } from 'lucide-react';
+import { AddSaleModal } from '../components/sales/AddSaleModal';
 
 export interface ResellerLead extends Contact {
   assignment_id: string;
@@ -60,6 +62,7 @@ export const ResellerDashboard: React.FC = () => {
   const [saleMetodo, setSaleMetodo] = useState('pix');
   const [saleNotes, setSaleNotes] = useState('');
   const [savingSale, setSavingSale] = useState(false);
+  const [showAddDirectSaleModal, setShowAddDirectSaleModal] = useState(false);
 
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
 
@@ -462,6 +465,13 @@ export const ResellerDashboard: React.FC = () => {
             Bem-vindo ao seu painel <span className="font-bold text-brand-red">MSPLAY CRM</span>. Gerencie seus leads e personalize seus criativos.
           </p>
         </div>
+        <button
+          type="button"
+          onClick={() => setShowAddDirectSaleModal(true)}
+          className="w-full sm:w-auto px-4 py-2.5 bg-emerald-600 hover:bg-emerald-500 active:bg-emerald-700 text-white rounded-xl text-xs font-black flex items-center justify-center gap-2 shadow-sm transition active:scale-[0.98] shrink-0"
+        >
+          <Plus className="w-4 h-4" /> + Adicionar venda
+        </button>
       </div>
 
       {/* Barra de Configuração do WhatsApp do Revendedor */}
@@ -1000,6 +1010,16 @@ export const ResellerDashboard: React.FC = () => {
           </div>
         </div>
       )}
+
+      {/* Modal Adicionar Venda Direta / Avulsa */}
+      <AddSaleModal
+        isOpen={showAddDirectSaleModal}
+        onClose={() => setShowAddDirectSaleModal(false)}
+        onSuccess={() => fetchLeadsAndCreatives()}
+        currentUserId={profile?.id || ''}
+        isAdmin={false}
+        existingContacts={contacts}
+      />
     </div>
   );
 };
