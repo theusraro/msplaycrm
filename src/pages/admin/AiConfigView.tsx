@@ -15,7 +15,8 @@ import {
   MessageSquareCode,
   ShieldCheck,
   Zap,
-  Lock
+  Lock,
+  AlertCircle
 } from 'lucide-react';
 
 interface AiConfigState {
@@ -81,6 +82,7 @@ export const AiConfigView: React.FC = () => {
   const [testNotes, setTestNotes] = useState('Usuária de TV Samsung, gosta de canais de futebol.');
   const [playgroundOutput, setPlaygroundOutput] = useState('');
   const [testing, setTesting] = useState(false);
+  const [isOverloaded, setIsOverloaded] = useState(false);
   const [playgroundMeta, setPlaygroundMeta] = useState<{ provider?: string; model?: string }>({});
 
   const loadConfig = async () => {
@@ -149,7 +151,7 @@ export const AiConfigView: React.FC = () => {
           ativo: false,
           updated_at: new Date().toISOString()
         })
-        .neq('id', '00000000-0000-0000-0000-000000000000');
+        .neq('provider', '');
 
       if (deactivateError) {
         throw new Error(`Erro ao desativar provedores: ${deactivateError.message}`);
@@ -218,6 +220,7 @@ export const AiConfigView: React.FC = () => {
 
   const handleRunPlaygroundTest = async () => {
     setTesting(true);
+    setIsOverloaded(false);
     setPlaygroundOutput('');
     setPlaygroundMeta({});
     try {
@@ -246,13 +249,26 @@ export const AiConfigView: React.FC = () => {
         throw new Error(`Resposta inválida do servidor (${response.status}): ${rawText.slice(0, 120) || 'Corpo vazio'}`);
       }
 
-      if (!response.ok) throw new Error(data.error || `Erro na resposta do backend (${response.status})`);
+      if (!response.ok) {
+        if (response.status === 503 || data.isTemporary || (data.error && data.error.includes('sobrecarregado'))) {
+          setIsOverloaded(true);
+          throw new Error('Modelo temporariamente sobrecarregado. Aguarde alguns segundos e tente novamente.');
+        }
+        throw new Error(data.error || `Erro na resposta do backend (${response.status})`);
+      }
       setPlaygroundOutput(data.text);
       setPlaygroundMeta({ provider: data.provider, model: data.model });
       addToast(`Mensagem gerada com sucesso via ${data.provider?.toUpperCase()}!`, 'success');
     } catch (err: any) {
-      setPlaygroundOutput(`Erro na chamada da IA: ${err.message}`);
-      addToast(err.message || 'Falha ao executar teste', 'error');
+      const isTemp = err.message?.includes('sobrecarregado') || err.message?.includes('temporariamente');
+      if (isTemp) {
+        setIsOverloaded(true);
+        setPlaygroundOutput('Modelo temporariamente sobrecarregado. Aguarde alguns segundos e tente novamente.');
+        addToast('Modelo temporariamente sobrecarregado. Aguarde alguns segundos e tente novamente.', 'warning');
+      } else {
+        setPlaygroundOutput(`Erro na chamada da IA: ${err.message}`);
+        addToast(err.message || 'Falha ao executar teste', 'error');
+      }
     } finally {
       setTesting(false);
     }
@@ -715,6 +731,21 @@ export const AiConfigView: React.FC = () => {
               <h3 className="text-sm font-black uppercase tracking-wider text-slate-900 dark:text-white mb-2">
                 Resultado da Geração IA
               </h3>
+              {isOverloaded && (
+                <div className="mb-3 p-3 rounded-xl bg-amber-500/10 border border-amber-500/20 text-amber-600 dark:text-amber-400 text-xs flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                  <div className="flex items-center gap-2">
+                    <AlertCircle className="w-4 h-4 shrink-0" />
+                    <span>Modelo temporariamente sobrecarregado. Aguarde alguns segundos e tente novamente.</span>
+                  </div>
+                  <button
+                    onClick={handleRunPlaygroundTest}
+                    disabled={testing}
+                    className="px-3 py-1 bg-amber-600 hover:bg-amber-500 text-white rounded-lg font-bold text-xs shrink-0 self-start sm:self-auto transition"
+                  >
+                    Tentar novamente
+                  </button>
+                </div>
+              )}
               <textarea
                 rows={12}
                 readOnly

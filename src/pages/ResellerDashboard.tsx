@@ -18,15 +18,24 @@ import {
   Inbox,
   Download,
   RefreshCw,
-  Tag
+  Tag,
+  DollarSign,
+  X,
+  ExternalLink,
+  ChevronDown
 } from 'lucide-react';
+
+export interface ResellerLead extends Contact {
+  assignment_id: string;
+  status: 'novo' | 'pendente' | 'concluido';
+}
 
 export const ResellerDashboard: React.FC = () => {
   const { profile, session } = useAuth();
   const { addToast } = useToast();
-  const [contacts, setContacts] = useState<(Contact & { status?: string })[]>([]);
+  const [contacts, setContacts] = useState<ResellerLead[]>([]);
   const [creatives, setCreatives] = useState<Creative[]>([]);
-  const [selectedContact, setSelectedContact] = useState<Contact | null>(null);
+  const [selectedContact, setSelectedContact] = useState<ResellerLead | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
   const [activeTab, setActiveTab] = useState<'leads' | 'creatives'>('leads');
   const [statusFilter, setStatusFilter] = useState<'novo' | 'pendente' | 'concluido'>('novo');
@@ -36,26 +45,41 @@ export const ResellerDashboard: React.FC = () => {
   const [resellerPhone, setResellerPhone] = useState(localStorage.getItem('msplay_reseller_phone') || '');
   const [generatedMessage, setGeneratedMessage] = useState('');
   const [loading, setLoading] = useState(false);
+  const [isAiOverloaded, setIsAiOverloaded] = useState(false);
   const [generatingId, setGeneratingId] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
+  const [statusUpdatingId, setStatusUpdatingId] = useState<string | null>(null);
+
+  // Modal Registrar Venda
+  const [showSaleModal, setShowSaleModal] = useState(false);
+  const [saleTargetLead, setSaleTargetLead] = useState<ResellerLead | null>(null);
+  const [saleValor, setSaleValor] = useState('35,00');
+  const [salePlano, setSalePlano] = useState('Mensal');
+  const [saleMetodo, setSaleMetodo] = useState('pix');
+  const [saleNotes, setSaleNotes] = useState('');
+  const [savingSale, setSavingSale] = useState(false);
 
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
 
   const fetchLeadsAndCreatives = async () => {
     if (!profile) return;
     
-    // Buscar contatos e status atribuídos ao revendedor
-    const { data: assignments } = await supabase
+    // Buscar contatos e status atribuídos ao revendedor selecionando assignment.id
+    const { data: assignments, error: assignError } = await supabase
       .from('contact_assignments')
-      .select('contact_id, status, contacts (*)')
-      .eq('user_id', profile.id);
+      .select('id, contact_id, status, assigned_at, contacts (*)')
+      .eq('user_id', profile.id)
+      .order('assigned_at', { ascending: false });
 
     if (assignments) {
-      const formatted = assignments.map((item: any) => ({
-        ...item.contacts,
-        status: item.status || 'novo'
-      })).filter(Boolean);
+      const formatted: ResellerLead[] = assignments
+        .filter((item: any) => item.contacts && item.contacts.id)
+        .map((item: any) => ({
+          ...item.contacts,
+          assignment_id: item.id,
+          status: (item.status as 'novo' | 'pendente' | 'concluido') || 'novo'
+        }));
       setContacts(formatted);
     }
 
@@ -84,7 +108,10 @@ export const ResellerDashboard: React.FC = () => {
 
   const handleGenerateMessage = async () => {
     if (!selectedContact) return setErrorMsg('Selecione um contato na lista primeiro.');
-    setLoading(true); setErrorMsg(''); setGeneratedMessage('');
+    setLoading(true);
+    setIsAiOverloaded(false);
+    setErrorMsg('');
+    setGeneratedMessage('');
 
     try {
       const response = await fetch('/api/generate', {
@@ -110,11 +137,21 @@ export const ResellerDashboard: React.FC = () => {
       }
 
       if (!response.ok) {
+        if (response.status === 503 || data.isTemporary || (data.error && data.error.includes('sobrecarregado'))) {
+          setIsAiOverloaded(true);
+          throw new Error('Modelo temporariamente sobrecarregado. Aguarde alguns segundos e tente novamente.');
+        }
         throw new Error(data.error || `Erro no servidor (${response.status})`);
       }
       setGeneratedMessage(data.text);
     } catch (err: any) {
-      setErrorMsg(err.message || 'Falha ao gerar mensagem');
+      const isTemp = err.message?.includes('sobrecarregado') || err.message?.includes('temporariamente');
+      if (isTemp) {
+        setIsAiOverloaded(true);
+        setErrorMsg('Modelo temporariamente sobrecarregado. Aguarde alguns segundos e tente novamente.');
+      } else {
+        setErrorMsg(err.message || 'Falha ao gerar mensagem');
+      }
     } finally {
       setLoading(false);
     }
@@ -123,33 +160,112 @@ export const ResellerDashboard: React.FC = () => {
   const handleCopy = () => {
     if (!generatedMessage) return;
     navigator.clipboard.writeText(generatedMessage);
-    setCopied(true); setTimeout(() => setCopied(false), 2000);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  };
+
+  const updateLeadStatus = async (
+    assignmentId: string,
+    newStatus: 'novo' | 'pendente' | 'concluido'
+  ): Promise<boolean> => {
+    if (!profile) return false;
+    setStatusUpdatingId(assignmentId);
+
+    // Atualização otimista
+    const previousContacts = [...contacts];
+    setContacts(prev =>
+      prev.map(c => (c.assignment_id === assignmentId ? { ...c, status: newStatus } : c))
+    );
+    if (selectedContact && selectedContact.assignment_id === assignmentId) {
+      setSelectedContact(prev => (prev ? { ...prev, status: newStatus } : null));
+    }
+
+    try {
+      const { error } = await supabase
+        .from('contact_assignments')
+        .update({ status: newStatus })
+        .eq('id', assignmentId)
+        .eq('user_id', profile.id);
+
+      if (error) {
+        setContacts(previousContacts);
+        addToast('Erro ao atualizar status: ' + error.message, 'error');
+        return false;
+      }
+
+      const labelMap = { novo: 'Novo', pendente: 'Pendente', concluido: 'Vendido' };
+      addToast(`Status atualizado para "${labelMap[newStatus]}"!`, 'success');
+      return true;
+    } catch (err: any) {
+      setContacts(previousContacts);
+      addToast('Erro ao atualizar status: ' + err.message, 'error');
+      return false;
+    } finally {
+      setStatusUpdatingId(null);
+    }
   };
 
   const handleOpenWhatsApp = async () => {
     if (!selectedContact || !generatedMessage) return;
     const phone = selectedContact.telefone.replace(/\D/g, '');
-    
-    // Atualiza status para 'pendente' automaticamente ao enviar
-    await updateLeadStatus(selectedContact.id, 'pendente');
+
+    // Regra: se o lead for "novo", muda para "pendente". Se já for "pendente" ou "concluido" (Vendido), não altera.
+    if (selectedContact.status === 'novo' && selectedContact.assignment_id) {
+      await updateLeadStatus(selectedContact.assignment_id, 'pendente');
+    }
 
     window.open(`https://wa.me/${phone}?text=${encodeURIComponent(generatedMessage)}`, '_blank');
   };
 
-  const updateLeadStatus = async (contactId: string, newStatus: 'novo' | 'pendente' | 'concluido') => {
-    if (!profile) return;
-    const { error } = await supabase
-      .from('contact_assignments')
-      .update({ status: newStatus })
-      .eq('user_id', profile.id)
-      .eq('contact_id', contactId);
+  const handleOpenSaleModal = (lead: ResellerLead) => {
+    setSaleTargetLead(lead);
+    setSaleValor('35,00');
+    setSalePlano('Mensal');
+    setSaleMetodo('pix');
+    setSaleNotes('');
+    setShowSaleModal(true);
+  };
 
-    if (error) {
-      addToast('Erro ao atualizar status: ' + error.message, 'error');
+  const handleSaveSale = async () => {
+    if (!saleTargetLead || !profile) return;
+
+    const cleanValor = parseFloat(saleValor.replace(/\./g, '').replace(',', '.')) || 0;
+    if (cleanValor <= 0) {
+      addToast('Informe um valor válido para a venda.', 'warning');
       return;
     }
 
-    fetchLeadsAndCreatives();
+    setSavingSale(true);
+    try {
+      // 1. Inserir venda primeiro
+      const salePayload = {
+        user_id: profile.id,
+        contact_id: saleTargetLead.id,
+        assignment_id: saleTargetLead.assignment_id,
+        valor: cleanValor,
+        plano: salePlano,
+        metodo_pagamento: saleMetodo,
+        status: 'concluido',
+        origem: 'crm',
+        observacoes: saleNotes.trim() || null
+      };
+
+      const { error: saleError } = await supabase.from('sales').insert([salePayload]);
+      if (saleError) {
+        throw new Error(`Falha ao registrar venda: ${saleError.message}`);
+      }
+
+      // 2. Somente após inserir a venda com sucesso, atualizar status do lead para 'concluido' (Vendido)
+      await updateLeadStatus(saleTargetLead.assignment_id, 'concluido');
+
+      setShowSaleModal(false);
+      setSaleTargetLead(null);
+      addToast('Venda registrada com sucesso!', 'success');
+    } catch (err: any) {
+      addToast(err.message || 'Erro ao registrar venda', 'error');
+    } finally {
+      setSavingSale(false);
+    }
   };
 
   const generateCustomImage = async (cr: { id: string; imagem_url: string; titulo: string }) => {
@@ -324,72 +440,293 @@ export const ResellerDashboard: React.FC = () => {
       {activeTab === 'leads' ? (
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
           {/* Lista de Leads */}
-          <div className="lg:col-span-5 border border-brand-lightBorder dark:border-brand-darkBorder bg-white dark:bg-brand-darkCard rounded-2xl p-5 shadow-sm h-[calc(100vh-260px)] flex flex-col">
-            <div className="flex justify-between items-center mb-3">
-              <h2 className="text-sm font-bold uppercase tracking-wider">Meus Leads</h2>
-              <div className="flex bg-slate-100 dark:bg-brand-dark p-1 rounded-xl text-[10px] font-bold">
-                <button onClick={() => setStatusFilter('novo')} className={`px-2.5 py-1 rounded-lg ${statusFilter === 'novo' ? 'bg-brand-red text-white' : 'text-slate-500'}`}>Novos</button>
-                <button onClick={() => setStatusFilter('pendente')} className={`px-2.5 py-1 rounded-lg ${statusFilter === 'pendente' ? 'bg-brand-red text-white' : 'text-slate-500'}`}>Pendentes</button>
-                <button onClick={() => setStatusFilter('concluido')} className={`px-2.5 py-1 rounded-lg ${statusFilter === 'concluido' ? 'bg-brand-red text-white' : 'text-slate-500'}`}>Vendas</button>
+          <div className="lg:col-span-5 border border-brand-lightBorder dark:border-brand-darkBorder bg-white dark:bg-brand-darkCard rounded-2xl p-4 sm:p-5 shadow-sm flex flex-col min-h-[420px] lg:h-[calc(100vh-260px)]">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-3">
+              <h2 className="text-sm font-bold uppercase tracking-wider text-slate-900 dark:text-white">
+                Meus Leads ({filteredContacts.length})
+              </h2>
+              <div className="flex bg-slate-100 dark:bg-brand-dark p-1 rounded-xl text-[11px] font-bold">
+                <button
+                  onClick={() => setStatusFilter('novo')}
+                  className={`flex-1 sm:flex-initial px-3 py-1.5 rounded-lg transition ${
+                    statusFilter === 'novo' ? 'bg-brand-red text-white shadow-xs' : 'text-slate-500 hover:text-slate-800 dark:hover:text-zinc-200'
+                  }`}
+                >
+                  Novos ({contacts.filter(c => c.status === 'novo').length})
+                </button>
+                <button
+                  onClick={() => setStatusFilter('pendente')}
+                  className={`flex-1 sm:flex-initial px-3 py-1.5 rounded-lg transition ${
+                    statusFilter === 'pendente' ? 'bg-brand-red text-white shadow-xs' : 'text-slate-500 hover:text-slate-800 dark:hover:text-zinc-200'
+                  }`}
+                >
+                  Pendentes ({contacts.filter(c => c.status === 'pendente').length})
+                </button>
+                <button
+                  onClick={() => setStatusFilter('concluido')}
+                  className={`flex-1 sm:flex-initial px-3 py-1.5 rounded-lg transition ${
+                    statusFilter === 'concluido' ? 'bg-brand-red text-white shadow-xs' : 'text-slate-500 hover:text-slate-800 dark:hover:text-zinc-200'
+                  }`}
+                >
+                  Vendidos ({contacts.filter(c => c.status === 'concluido').length})
+                </button>
               </div>
             </div>
 
             <div className="relative mb-3">
               <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
-              <input type="text" placeholder="Buscar lead..." value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} className="w-full pl-9 pr-3 py-2 text-xs rounded-xl border border-brand-lightBorder dark:border-brand-darkBorder bg-slate-50 dark:bg-brand-dark outline-none focus:ring-2 focus:ring-brand-red" />
+              <input
+                type="text"
+                placeholder="Buscar por nome ou telefone..."
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+                className="w-full pl-9 pr-3 py-2.5 text-xs rounded-xl border border-brand-lightBorder dark:border-brand-darkBorder bg-slate-50 dark:bg-brand-dark outline-none focus:ring-2 focus:ring-brand-red text-slate-900 dark:text-white"
+              />
             </div>
 
-            <div className="flex-1 overflow-y-auto space-y-2">
-              {filteredContacts.map(c => (
-                <div key={c.id} onClick={() => setSelectedContact(c)} className={`p-3 rounded-xl border text-xs cursor-pointer transition ${selectedContact?.id === c.id ? 'border-brand-red bg-red-50 dark:bg-red-950/30' : 'border-brand-lightBorder dark:border-brand-darkBorder hover:border-slate-300'}`}>
-                  <div className="flex justify-between font-bold mb-1">
-                    <span className="flex gap-1.5 items-center"><User className="w-3.5 h-3.5 text-brand-red" />{c.nome}</span>
-                    <span className="text-slate-400">{c.telefone}</span>
-                  </div>
-                  <div className="flex items-center justify-between mt-2 pt-2 border-t border-brand-lightBorder dark:border-brand-darkBorder text-[10px]">
-                    <span className="text-slate-400 capitalize">Status: <b>{c.status}</b></span>
-                    <div className="flex gap-1" onClick={(e) => e.stopPropagation()}>
-                      {c.status !== 'pendente' && <button onClick={() => updateLeadStatus(c.id, 'pendente')} className="px-2 py-0.5 rounded bg-amber-100 text-amber-700 font-bold">Pendente</button>}
-                      {c.status !== 'concluido' && <button onClick={() => updateLeadStatus(c.id, 'concluido')} className="px-2 py-0.5 rounded bg-emerald-100 text-emerald-700 font-bold">Vendeu!</button>}
+            <div className="flex-1 overflow-y-auto space-y-2.5 pr-0.5">
+              {filteredContacts.map((c) => {
+                const isSelected = selectedContact?.id === c.id;
+                const isUpdating = statusUpdatingId === c.assignment_id;
+
+                return (
+                  <div
+                    key={c.assignment_id || c.id}
+                    onClick={() => setSelectedContact(c)}
+                    className={`p-3.5 rounded-xl border text-xs cursor-pointer transition ${
+                      isSelected
+                        ? 'border-brand-red bg-red-50/70 dark:bg-red-950/30 shadow-xs'
+                        : 'border-brand-lightBorder dark:border-brand-darkBorder hover:border-slate-300 dark:hover:border-zinc-700 bg-slate-50/50 dark:bg-brand-dark/30'
+                    }`}
+                  >
+                    <div className="flex items-start justify-between gap-2 mb-1.5">
+                      <div className="flex items-center gap-2 min-w-0">
+                        <div className="w-8 h-8 rounded-xl bg-slate-100 dark:bg-zinc-800 text-brand-red font-bold flex items-center justify-center shrink-0">
+                          {c.nome ? c.nome.charAt(0).toUpperCase() : <User className="w-4 h-4" />}
+                        </div>
+                        <div className="min-w-0">
+                          <p className="font-bold text-slate-900 dark:text-white truncate text-xs">{c.nome}</p>
+                          <p className="text-[11px] text-slate-500 dark:text-zinc-400 font-mono">{c.telefone}</p>
+                        </div>
+                      </div>
+
+                      {/* Badge de status */}
+                      <span
+                        className={`px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider shrink-0 border ${
+                          c.status === 'novo'
+                            ? 'bg-blue-500/10 text-blue-500 border-blue-500/20'
+                            : c.status === 'pendente'
+                            ? 'bg-amber-500/10 text-amber-500 border-amber-500/20'
+                            : 'bg-emerald-500/10 text-emerald-500 border-emerald-500/20'
+                        }`}
+                      >
+                        {c.status === 'concluido' ? 'Vendido' : c.status === 'pendente' ? 'Pendente' : 'Novo'}
+                      </span>
+                    </div>
+
+                    {c.observacoes && (
+                      <p className="text-[11px] text-slate-500 dark:text-zinc-400 line-clamp-1 mb-2 bg-white dark:bg-zinc-900/60 p-1.5 rounded-lg border border-brand-lightBorder dark:border-brand-darkBorder">
+                        {c.observacoes}
+                      </p>
+                    )}
+
+                    {/* Botões de Ação do Lead */}
+                    <div
+                      className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-brand-lightBorder dark:border-brand-darkBorder"
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      <div className="flex items-center gap-1.5">
+                        <span className="text-[10px] text-slate-400 font-medium">Mudar:</span>
+                        {isUpdating ? (
+                          <RefreshCw className="w-3.5 h-3.5 animate-spin text-slate-400" />
+                        ) : (
+                          <>
+                            {c.status !== 'novo' && (
+                              <button
+                                onClick={() => updateLeadStatus(c.assignment_id, 'novo')}
+                                className="px-2 py-1 rounded-lg bg-blue-50 dark:bg-blue-950/40 text-blue-600 dark:text-blue-400 text-[10px] font-bold hover:bg-blue-100 transition min-h-[28px]"
+                              >
+                                Novo
+                              </button>
+                            )}
+                            {c.status !== 'pendente' && (
+                              <button
+                                onClick={() => updateLeadStatus(c.assignment_id, 'pendente')}
+                                className="px-2 py-1 rounded-lg bg-amber-50 dark:bg-amber-950/40 text-amber-600 dark:text-amber-400 text-[10px] font-bold hover:bg-amber-100 transition min-h-[28px]"
+                              >
+                                Pendente
+                              </button>
+                            )}
+                            {c.status !== 'concluido' && (
+                              <button
+                                onClick={() => handleOpenSaleModal(c)}
+                                className="px-2 py-1 rounded-lg bg-emerald-50 dark:bg-emerald-950/40 text-emerald-600 dark:text-emerald-400 text-[10px] font-bold hover:bg-emerald-100 transition flex items-center gap-1 min-h-[28px]"
+                              >
+                                <DollarSign className="w-3 h-3" /> Vendido
+                              </button>
+                            )}
+                          </>
+                        )}
+                      </div>
+
+                      <div className="flex items-center gap-1.5">
+                        <a
+                          href={`https://wa.me/${c.telefone.replace(/\D/g, '')}`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          onClick={() => {
+                            if (c.status === 'novo' && c.assignment_id) {
+                              updateLeadStatus(c.assignment_id, 'pendente');
+                            }
+                          }}
+                          className="p-1.5 rounded-lg bg-emerald-500/10 text-emerald-600 hover:bg-emerald-500/20 transition flex items-center gap-1 text-[10px] font-bold min-h-[28px]"
+                          title="Abrir WhatsApp direto"
+                        >
+                          <Phone className="w-3 h-3" /> Zap
+                        </a>
+                        <button
+                          onClick={() => setSelectedContact(c)}
+                          className={`px-2 py-1 rounded-lg text-[10px] font-bold transition min-h-[28px] ${
+                            isSelected
+                              ? 'bg-brand-red text-white'
+                              : 'bg-slate-200 dark:bg-zinc-800 text-slate-700 dark:text-zinc-300'
+                          }`}
+                        >
+                          {isSelected ? 'Selecionado' : 'Usar na IA'}
+                        </button>
+                      </div>
                     </div>
                   </div>
+                );
+              })}
+
+              {filteredContacts.length === 0 && (
+                <div className="text-center py-12 text-slate-400 dark:text-zinc-500">
+                  <Inbox className="w-8 h-8 mx-auto mb-2 opacity-40" />
+                  <p className="text-xs">Nenhum lead encontrado nesta categoria.</p>
                 </div>
-              ))}
-              {filteredContacts.length === 0 && <p className="text-center text-xs text-slate-400 py-10">Nenhum lead nesta categoria.</p>}
+              )}
             </div>
           </div>
 
           {/* Gerador de IA */}
-          <div className="lg:col-span-7 border border-brand-lightBorder dark:border-brand-darkBorder bg-white dark:bg-brand-darkCard rounded-2xl p-6 shadow-sm">
-            <div className="flex justify-between items-center border-b border-brand-lightBorder dark:border-brand-darkBorder pb-4 mb-4">
-              <h2 className="text-base font-bold flex gap-2 items-center"><Sparkles className="w-5 h-5 text-brand-red" /> Gerador de Abordagem IA</h2>
-            </div>
-            
-            {errorMsg && <div className="mb-4 p-3 rounded-xl bg-red-50 border border-red-200 text-xs text-red-600 flex gap-2"><AlertCircle className="w-4 h-4 shrink-0" />{errorMsg}</div>}
-
-            <div className="space-y-3 mb-4">
-              <label className="block text-xs font-bold text-slate-500 uppercase">Escolha o Objetivo da Abordagem:</label>
-              <div className="grid grid-cols-2 gap-2 text-xs">
-                {[
-                  { id: 'venda_direta', label: '⚡ Venda Direta' },
-                  { id: 'venda_persuasiva', label: '🎯 Venda Persuasiva' },
-                  { id: 'venda_rapida', label: '🔥 Venda Rápida' },
-                  { id: 'recuperacao', label: '🔄 Recuperação de Inativo' }
-                ].map(t => (
-                  <button key={t.id} onClick={() => setMessageType(t.id)} className={`py-2 px-3 rounded-xl font-bold border transition text-left ${messageType === t.id ? 'border-brand-red bg-brand-red text-white' : 'border-brand-lightBorder dark:border-brand-darkBorder bg-slate-50 dark:bg-brand-dark text-slate-700 dark:text-zinc-300'}`}>{t.label}</button>
-                ))}
+          <div className="lg:col-span-7 border border-brand-lightBorder dark:border-brand-darkBorder bg-white dark:bg-brand-darkCard rounded-2xl p-5 sm:p-6 shadow-sm flex flex-col justify-between">
+            <div>
+              <div className="flex justify-between items-center border-b border-brand-lightBorder dark:border-brand-darkBorder pb-4 mb-4">
+                <div>
+                  <h2 className="text-base font-bold flex gap-2 items-center text-slate-900 dark:text-white">
+                    <Sparkles className="w-5 h-5 text-brand-red" /> Gerador de Abordagem IA
+                  </h2>
+                  <p className="text-xs text-slate-500 dark:text-zinc-400 mt-0.5">
+                    {selectedContact
+                      ? `Gerando abordagem para: ${selectedContact.nome} (${selectedContact.telefone})`
+                      : 'Selecione um lead na lista ao lado para personalizar a mensagem.'}
+                  </p>
+                </div>
               </div>
-              <input type="text" placeholder="Instruções extras (opcional)" value={customInstructions} onChange={(e) => setCustomInstructions(e.target.value)} className="w-full p-2.5 text-xs rounded-xl border border-brand-lightBorder dark:border-brand-darkBorder bg-slate-50 dark:bg-brand-dark outline-none focus:ring-2 focus:ring-brand-red" />
-              <button onClick={handleGenerateMessage} disabled={loading || !selectedContact} className="w-full bg-brand-red hover:bg-brand-redHover text-white py-2.5 rounded-xl font-bold text-xs flex justify-center gap-2 disabled:opacity-50">
-                {loading ? 'Gerando mensagem...' : <><Sparkles className="w-4 h-4" /> Gerar Mensagem Pronta</>}
-              </button>
+
+              {isAiOverloaded && (
+                <div className="mb-4 p-3.5 rounded-xl bg-amber-500/10 border border-amber-500/20 text-amber-600 dark:text-amber-400 text-xs flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                  <div className="flex items-center gap-2">
+                    <AlertCircle className="w-4 h-4 shrink-0" />
+                    <span>Modelo temporariamente sobrecarregado. Aguarde alguns segundos e tente novamente.</span>
+                  </div>
+                  <button
+                    onClick={handleGenerateMessage}
+                    disabled={loading}
+                    className="px-3 py-1.5 bg-amber-600 hover:bg-amber-500 text-white rounded-lg font-bold text-xs shrink-0 self-start sm:self-auto transition min-h-[36px]"
+                  >
+                    Tentar novamente
+                  </button>
+                </div>
+              )}
+
+              {errorMsg && !isAiOverloaded && (
+                <div className="mb-4 p-3.5 rounded-xl bg-red-50 dark:bg-red-950/40 border border-red-200 dark:border-red-900/50 text-xs text-red-600 dark:text-red-400 flex items-center gap-2">
+                  <AlertCircle className="w-4 h-4 shrink-0" />
+                  <span>{errorMsg}</span>
+                </div>
+              )}
+
+              <div className="space-y-3 mb-4">
+                <label className="block text-xs font-bold text-slate-500 dark:text-zinc-400 uppercase tracking-wider">
+                  Objetivo da Abordagem:
+                </label>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
+                  {[
+                    { id: 'venda_direta', label: '⚡ Venda Direta' },
+                    { id: 'venda_persuasiva', label: '🎯 Venda Persuasiva' },
+                    { id: 'venda_rapida', label: '🔥 Venda Rápida' },
+                    { id: 'recuperacao', label: '🔄 Recuperação de Inativo' }
+                  ].map((t) => (
+                    <button
+                      key={t.id}
+                      onClick={() => setMessageType(t.id)}
+                      className={`py-2.5 px-3 rounded-xl font-bold border transition text-left min-h-[44px] ${
+                        messageType === t.id
+                          ? 'border-brand-red bg-brand-red text-white shadow-xs'
+                          : 'border-brand-lightBorder dark:border-brand-darkBorder bg-slate-50 dark:bg-brand-dark text-slate-700 dark:text-zinc-300 hover:border-slate-300'
+                      }`}
+                    >
+                      {t.label}
+                    </button>
+                  ))}
+                </div>
+
+                <input
+                  type="text"
+                  placeholder="Instruções extras para a IA (ex: focar no Premiere ou Netflix)"
+                  value={customInstructions}
+                  onChange={(e) => setCustomInstructions(e.target.value)}
+                  className="w-full p-2.5 text-xs rounded-xl border border-brand-lightBorder dark:border-brand-darkBorder bg-slate-50 dark:bg-brand-dark outline-none focus:ring-2 focus:ring-brand-red text-slate-900 dark:text-white"
+                />
+
+                <button
+                  onClick={handleGenerateMessage}
+                  disabled={loading || !selectedContact}
+                  className="w-full bg-brand-red hover:bg-brand-redHover text-white py-3 rounded-xl font-bold text-xs flex items-center justify-center gap-2 disabled:opacity-50 transition shadow-sm min-h-[44px]"
+                >
+                  {loading ? (
+                    <>
+                      <RefreshCw className="w-4 h-4 animate-spin" />
+                      Gerando mensagem com IA...
+                    </>
+                  ) : (
+                    <>
+                      <Sparkles className="w-4 h-4" />
+                      Gerar Mensagem Pronta
+                    </>
+                  )}
+                </button>
+              </div>
+
+              <textarea
+                rows={7}
+                placeholder="A mensagem gerada aparecerá aqui. Você também pode editar o texto antes de enviar..."
+                value={generatedMessage}
+                onChange={(e) => setGeneratedMessage(e.target.value)}
+                className="w-full p-3 text-xs rounded-xl border border-brand-lightBorder dark:border-brand-darkBorder bg-slate-50 dark:bg-brand-dark outline-none focus:ring-2 focus:ring-brand-red leading-relaxed text-slate-900 dark:text-white font-sans"
+              />
             </div>
 
-            <textarea rows={6} value={generatedMessage} onChange={(e) => setGeneratedMessage(e.target.value)} className="w-full p-3 text-xs rounded-xl border border-brand-lightBorder dark:border-brand-darkBorder bg-slate-50 dark:bg-brand-dark outline-none focus:ring-2 focus:ring-brand-red" />
-            
-            <div className="grid grid-cols-2 gap-3 mt-4">
-              <button onClick={handleCopy} disabled={!generatedMessage} className="flex justify-center gap-2 py-2.5 rounded-xl border border-brand-lightBorder dark:border-brand-darkBorder bg-slate-50 dark:bg-brand-dark text-xs font-bold disabled:opacity-40">{copied ? <Check className="w-4 h-4 text-green-500" /> : <Copy className="w-4 h-4" />} Copiar Texto</button>
-              <button onClick={handleOpenWhatsApp} disabled={!generatedMessage || !selectedContact} className="flex justify-center gap-2 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold disabled:opacity-40"><Send className="w-4 h-4" /> Enviar WhatsApp & Mudar p/ Pendente</button>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-4 pt-4 border-t border-brand-lightBorder dark:border-brand-darkBorder">
+              <button
+                onClick={handleCopy}
+                disabled={!generatedMessage}
+                className="flex items-center justify-center gap-2 py-3 rounded-xl border border-brand-lightBorder dark:border-brand-darkBorder bg-slate-50 dark:bg-brand-dark text-xs font-bold text-slate-700 dark:text-zinc-200 disabled:opacity-40 transition min-h-[44px]"
+              >
+                {copied ? <Check className="w-4 h-4 text-green-500" /> : <Copy className="w-4 h-4" />}
+                {copied ? 'Copiado para o Clipboard!' : 'Copiar Texto'}
+              </button>
+
+              <button
+                onClick={handleOpenWhatsApp}
+                disabled={!generatedMessage || !selectedContact}
+                className="flex items-center justify-center gap-2 py-3 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold disabled:opacity-40 transition shadow-sm min-h-[44px]"
+              >
+                <Send className="w-4 h-4" />
+                Enviar WhatsApp & Mover p/ Pendente
+              </button>
             </div>
           </div>
         </div>
@@ -444,6 +781,141 @@ export const ResellerDashboard: React.FC = () => {
               </div>
             ))}
             {creatives.length === 0 && <p className="text-slate-400 text-xs py-10 col-span-full text-center">Nenhum criativo cadastrado pelo Admin ainda.</p>}
+          </div>
+        </div>
+      )}
+
+      {/* Modal de Registro de Venda */}
+      {showSaleModal && saleTargetLead && (
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-xs z-50 flex items-center justify-center p-4 animate-in fade-in duration-150">
+          <div className="w-full max-w-md bg-white dark:bg-[#121214] border border-brand-lightBorder dark:border-zinc-800 rounded-2xl shadow-2xl overflow-hidden animate-in zoom-in-95 duration-150">
+            {/* Header Modal */}
+            <div className="p-5 border-b border-brand-lightBorder dark:border-zinc-800 flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-xl bg-emerald-500/10 text-emerald-500 flex items-center justify-center shrink-0">
+                  <DollarSign className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-sm font-black text-slate-900 dark:text-white uppercase tracking-wider">
+                    Registrar Venda
+                  </h3>
+                  <p className="text-xs text-slate-500 dark:text-zinc-400">
+                    Lead: <span className="font-bold text-slate-800 dark:text-zinc-200">{saleTargetLead.nome}</span>
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => {
+                  setShowSaleModal(false);
+                  setSaleTargetLead(null);
+                }}
+                className="p-1.5 rounded-lg text-slate-400 hover:text-slate-600 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-zinc-800 transition"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Form */}
+            <div className="p-5 space-y-4 text-xs">
+              <div className="p-3 rounded-xl bg-emerald-50 dark:bg-emerald-950/20 border border-emerald-200 dark:border-emerald-900/30 text-emerald-700 dark:text-emerald-400 text-[11px]">
+                A venda será gravada no histórico do financeiro e o lead será movido automaticamente para o status <b>Vendido</b>.
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-slate-700 dark:text-zinc-300 mb-1">
+                  Valor da Venda (R$) *
+                </label>
+                <div className="relative">
+                  <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 font-bold">R$</span>
+                  <input
+                    type="text"
+                    value={saleValor}
+                    onChange={(e) => setSaleValor(e.target.value)}
+                    placeholder="35,00"
+                    className="w-full pl-9 pr-3 py-2.5 rounded-xl border border-brand-lightBorder dark:border-zinc-800 bg-slate-50 dark:bg-zinc-900 outline-none focus:ring-2 focus:ring-emerald-500 font-bold text-slate-900 dark:text-white text-sm"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 dark:text-zinc-300 mb-1">
+                    Plano *
+                  </label>
+                  <select
+                    value={salePlano}
+                    onChange={(e) => setSalePlano(e.target.value)}
+                    className="w-full p-2.5 rounded-xl border border-brand-lightBorder dark:border-zinc-800 bg-slate-50 dark:bg-zinc-900 outline-none focus:ring-2 focus:ring-emerald-500 font-bold text-slate-900 dark:text-white text-xs"
+                  >
+                    <option value="Mensal">Mensal</option>
+                    <option value="Trimestral">Trimestral</option>
+                    <option value="Semestral">Semestral</option>
+                    <option value="Anual">Anual</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 dark:text-zinc-300 mb-1">
+                    Forma de Pagamento *
+                  </label>
+                  <select
+                    value={saleMetodo}
+                    onChange={(e) => setSaleMetodo(e.target.value)}
+                    className="w-full p-2.5 rounded-xl border border-brand-lightBorder dark:border-zinc-800 bg-slate-50 dark:bg-zinc-900 outline-none focus:ring-2 focus:ring-emerald-500 font-bold text-slate-900 dark:text-white text-xs"
+                  >
+                    <option value="pix">PIX</option>
+                    <option value="cartao">Cartão de Crédito</option>
+                    <option value="boleto">Boleto</option>
+                    <option value="dinheiro">Dinheiro</option>
+                    <option value="outro">Outro</option>
+                  </select>
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-slate-700 dark:text-zinc-300 mb-1">
+                  Observações (opcional)
+                </label>
+                <textarea
+                  rows={2}
+                  value={saleNotes}
+                  onChange={(e) => setSaleNotes(e.target.value)}
+                  placeholder="Ex: Pagamento confirmado via comprovante, renova dia 10..."
+                  className="w-full p-2.5 rounded-xl border border-brand-lightBorder dark:border-zinc-800 bg-slate-50 dark:bg-zinc-900 outline-none focus:ring-2 focus:ring-emerald-500 text-slate-900 dark:text-white text-xs"
+                />
+              </div>
+            </div>
+
+            {/* Footer Modal */}
+            <div className="p-4 border-t border-brand-lightBorder dark:border-zinc-800 bg-slate-50/50 dark:bg-zinc-900/50 flex items-center justify-end gap-2">
+              <button
+                onClick={() => {
+                  setShowSaleModal(false);
+                  setSaleTargetLead(null);
+                }}
+                disabled={savingSale}
+                className="px-4 py-2.5 rounded-xl border border-brand-lightBorder dark:border-zinc-800 text-xs font-bold text-slate-700 dark:text-zinc-300 hover:bg-slate-100 dark:hover:bg-zinc-800 transition min-h-[40px]"
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={handleSaveSale}
+                disabled={savingSale}
+                className="px-5 py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-bold flex items-center gap-2 shadow-sm transition disabled:opacity-50 min-h-[40px]"
+              >
+                {savingSale ? (
+                  <>
+                    <RefreshCw className="w-4 h-4 animate-spin" />
+                    Salvando Venda...
+                  </>
+                ) : (
+                  <>
+                    <Check className="w-4 h-4" />
+                    Confirmar Venda
+                  </>
+                )}
+              </button>
+            </div>
           </div>
         </div>
       )}

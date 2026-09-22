@@ -711,7 +711,7 @@ export const LeadsView: React.FC = () => {
 
       {/* Leads Table */}
       <div className="bg-white dark:bg-brand-darkCard border border-brand-lightBorder dark:border-brand-darkBorder rounded-2xl overflow-hidden shadow-sm">
-        <div className="overflow-x-auto">
+        <div className="hidden md:block overflow-x-auto">
           <table className="w-full text-left border-collapse">
             <thead>
               <tr className="border-b border-brand-lightBorder dark:border-brand-darkBorder bg-slate-50/75 dark:bg-brand-dark/50 text-[11px] font-black uppercase text-slate-500 dark:text-zinc-400">
@@ -802,29 +802,31 @@ export const LeadsView: React.FC = () => {
                     </td>
                     <td className="py-3.5 px-4">
                       {c.assignments.length === 0 ? (
-                        <span className="text-slate-400 italic">Não distribuído</span>
-                      ) : c.assignments.length === 1 ? (
-                        <span className="font-bold text-slate-900 dark:text-white">
-                          {c.assignments[0].reseller?.nome_completo || c.assignments[0].reseller?.email}
-                        </span>
+                        <span className="text-slate-400 italic text-[11px]">Nenhum revendedor</span>
                       ) : (
-                        <div className="flex flex-wrap items-center gap-1.5">
-                          <span className="font-bold text-slate-900 dark:text-white">
-                            {c.assignments[0].reseller?.nome_completo || c.assignments[0].reseller?.email}
-                          </span>
-                          <span
-                            className="px-1.5 py-0.5 rounded-md bg-brand-red/10 text-brand-red font-black text-[10px] cursor-help"
-                            title={c.assignments
-                              .map((a) => a.reseller?.nome_completo || a.reseller?.email || 'Revendedor')
-                              .join(', ')}
-                          >
-                            +{c.assignments.length - 1}
-                          </span>
+                        <div className="flex flex-wrap gap-1 max-w-xs">
+                          {c.assignments.map((a) => (
+                            <span
+                              key={a.id}
+                              className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-slate-100 dark:bg-brand-dark border border-brand-lightBorder dark:border-brand-darkBorder text-[10px] text-slate-700 dark:text-zinc-300"
+                            >
+                              <span
+                                className={`w-1.5 h-1.5 rounded-full ${
+                                  a.status === 'concluido'
+                                    ? 'bg-emerald-500'
+                                    : a.status === 'pendente'
+                                    ? 'bg-amber-500'
+                                    : 'bg-blue-500'
+                                }`}
+                              />
+                              {a.reseller?.nome_completo || a.reseller?.email || 'Revendedor'}
+                            </span>
+                          ))}
                         </div>
                       )}
                     </td>
-                    <td className="py-3.5 px-4 max-w-xs truncate text-slate-500">
-                      {c.observacoes || '-'}
+                    <td className="py-3.5 px-4 text-slate-500 dark:text-zinc-400 max-w-xs truncate">
+                      {c.observacoes || <span className="italic text-slate-400">-</span>}
                     </td>
                     <td className="py-3.5 px-4 text-right">
                       <div className="flex items-center justify-end gap-1.5">
@@ -852,6 +854,99 @@ export const LeadsView: React.FC = () => {
               })}
             </tbody>
           </table>
+        </div>
+
+        {/* Mobile View - Responsive Lead Cards */}
+        <div className="md:hidden divide-y divide-brand-lightBorder dark:divide-brand-darkBorder">
+          {filteredContacts.map((c) => {
+            const isSelected = selectedLeadIds.includes(c.id);
+            return (
+              <div
+                key={c.id}
+                className={`p-4 transition ${
+                  isSelected ? 'bg-red-50/50 dark:bg-red-950/20' : ''
+                }`}
+              >
+                <div className="flex items-start justify-between gap-3 mb-2">
+                  <div className="flex items-center gap-3 min-w-0">
+                    <input
+                      type="checkbox"
+                      checked={isSelected}
+                      onChange={() => toggleSelectOne(c.id)}
+                      className="rounded border-slate-300 w-4 h-4 text-brand-red focus:ring-brand-red shrink-0"
+                    />
+                    <div className="w-8 h-8 rounded-xl bg-slate-100 dark:bg-zinc-800 text-brand-red font-bold flex items-center justify-center text-xs shrink-0">
+                      {c.nome ? c.nome.charAt(0).toUpperCase() : 'L'}
+                    </div>
+                    <div className="min-w-0">
+                      <p className="font-bold text-slate-900 dark:text-white truncate text-xs">{c.nome}</p>
+                      <p className="text-[11px] font-mono text-slate-500 dark:text-zinc-400">{c.telefone}</p>
+                    </div>
+                  </div>
+
+                  {c.assignments.length === 0 ? (
+                    <StatusBadge status="unassigned" text="Livre" />
+                  ) : (
+                    <StatusBadge
+                      status={c.assignments[0].status}
+                      text={
+                        c.assignments[0].status === 'novo'
+                          ? 'Novo'
+                          : c.assignments[0].status === 'pendente'
+                          ? 'Em Atendimento'
+                          : 'Vendido'
+                      }
+                    />
+                  )}
+                </div>
+
+                {/* Revendedores atribuídos */}
+                <div className="my-2 text-[11px]">
+                  <span className="text-slate-400 font-medium">Revendedor: </span>
+                  {c.assignments.length === 0 ? (
+                    <span className="text-slate-400 italic">Nenhum</span>
+                  ) : (
+                    <span className="text-slate-700 dark:text-zinc-300 font-semibold">
+                      {c.assignments
+                        .map((a) => a.reseller?.nome_completo || a.reseller?.email || 'Revendedor')
+                        .join(', ')}
+                    </span>
+                  )}
+                </div>
+
+                {c.observacoes && (
+                  <p className="text-[11px] text-slate-500 dark:text-zinc-400 bg-slate-50 dark:bg-zinc-900/60 p-2 rounded-lg border border-brand-lightBorder dark:border-brand-darkBorder mb-3 line-clamp-2">
+                    {c.observacoes}
+                  </p>
+                )}
+
+                {/* Ações Mobile */}
+                <div className="flex items-center justify-between pt-2 border-t border-brand-lightBorder dark:border-brand-darkBorder">
+                  <span className="text-[10px] text-slate-400">
+                    {new Date(c.created_at).toLocaleDateString('pt-BR')}
+                  </span>
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={async () => {
+                        const { openWhatsAppConversation } = await import('../../services/whatsappService');
+                        openWhatsAppConversation({ phone: c.telefone });
+                      }}
+                      className="px-3 py-1.5 rounded-lg bg-emerald-500/10 text-emerald-600 hover:bg-emerald-500/20 text-xs font-bold flex items-center gap-1.5 min-h-[36px] transition"
+                    >
+                      <Phone className="w-3.5 h-3.5" /> WhatsApp
+                    </button>
+                    <button
+                      onClick={() => handleDeleteLeads([c.id])}
+                      className="p-2 rounded-lg border border-brand-lightBorder dark:border-brand-darkBorder hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-950/40 text-slate-400 transition min-h-[36px] min-w-[36px] flex items-center justify-center"
+                      title="Excluir Lead"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </button>
+                  </div>
+                </div>
+              </div>
+            );
+          })}
         </div>
 
         {filteredContacts.length === 0 && (
