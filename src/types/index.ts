@@ -56,7 +56,6 @@ export interface Sale {
   id: string;
   user_id: string;
   contact_id?: string | null;
-  assignment_id?: string | null;
   valor: number;
   plano?: string;
   metodo_pagamento?: string;

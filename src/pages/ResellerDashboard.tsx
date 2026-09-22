@@ -22,7 +22,8 @@ import {
   DollarSign,
   X,
   ExternalLink,
-  ChevronDown
+  ChevronDown,
+  MessageCircle
 } from 'lucide-react';
 
 export interface ResellerLead extends Contact {
@@ -205,16 +206,27 @@ export const ResellerDashboard: React.FC = () => {
     }
   };
 
-  const handleOpenWhatsApp = async () => {
-    if (!selectedContact || !generatedMessage) return;
-    const phone = selectedContact.telefone.replace(/\D/g, '');
-
-    // Regra: se o lead for "novo", muda para "pendente". Se já for "pendente" ou "concluido" (Vendido), não altera.
-    if (selectedContact.status === 'novo' && selectedContact.assignment_id) {
-      await updateLeadStatus(selectedContact.assignment_id, 'pendente');
+  const handleOpenWhatsApp = async (leadToOpen?: ResellerLead) => {
+    const target = leadToOpen || selectedContact;
+    if (!target) return;
+    const cleanPhone = target.telefone.replace(/\D/g, '');
+    if (!cleanPhone) {
+      addToast('Telefone inválido para este contato.', 'warning');
+      return;
     }
 
-    window.open(`https://wa.me/${phone}?text=${encodeURIComponent(generatedMessage)}`, '_blank');
+    // Regra: se o lead for "novo", muda para "pendente". Se já for "pendente" ou "concluido" (Vendido), não altera.
+    if (target.status === 'novo' && target.assignment_id) {
+      await updateLeadStatus(target.assignment_id, 'pendente');
+    }
+
+    // Se houver mensagem gerada E o contato for o selecionado na IA, inclui o texto codificado
+    let textParam = '';
+    if (selectedContact?.id === target.id && generatedMessage.trim()) {
+      textParam = `?text=${encodeURIComponent(generatedMessage.trim())}`;
+    }
+
+    window.open(`https://wa.me/${cleanPhone}${textParam}`, '_blank');
   };
 
   const handleOpenSaleModal = (lead: ResellerLead) => {
@@ -227,7 +239,7 @@ export const ResellerDashboard: React.FC = () => {
   };
 
   const handleSaveSale = async () => {
-    if (!saleTargetLead || !profile) return;
+    if (savingSale || !saleTargetLead || !profile) return;
 
     const cleanValor = parseFloat(saleValor.replace(/\./g, '').replace(',', '.')) || 0;
     if (cleanValor <= 0) {
@@ -237,30 +249,72 @@ export const ResellerDashboard: React.FC = () => {
 
     setSavingSale(true);
     try {
-      // 1. Inserir venda primeiro
+      // 1. Inserir venda primeiro utilizando ESTRITAMENTE as colunas existentes de public.sales
       const salePayload = {
         user_id: profile.id,
         contact_id: saleTargetLead.id,
-        assignment_id: saleTargetLead.assignment_id,
         valor: cleanValor,
         plano: salePlano,
         metodo_pagamento: saleMetodo,
-        status: 'concluido',
-        origem: 'crm',
         observacoes: saleNotes.trim() || null
       };
 
-      const { error: saleError } = await supabase.from('sales').insert([salePayload]);
+      const { data: insertedSale, error: saleError } = await supabase
+        .from('sales')
+        .insert([salePayload])
+        .select()
+        .single();
+
       if (saleError) {
         throw new Error(`Falha ao registrar venda: ${saleError.message}`);
       }
 
-      // 2. Somente após inserir a venda com sucesso, atualizar status do lead para 'concluido' (Vendido)
-      await updateLeadStatus(saleTargetLead.assignment_id, 'concluido');
+      // 2. Somente após inserir a venda com sucesso, localizar e atualizar a contact_assignment daquele contact_id + user_id
+      let targetAssignmentId = saleTargetLead.assignment_id;
+      if (!targetAssignmentId) {
+        const { data: assignData } = await supabase
+          .from('contact_assignments')
+          .select('id')
+          .eq('contact_id', saleTargetLead.id)
+          .eq('user_id', profile.id)
+          .maybeSingle();
+        targetAssignmentId = assignData?.id;
+      }
+
+      let updateStatusOk = false;
+      if (targetAssignmentId) {
+        updateStatusOk = await updateLeadStatus(targetAssignmentId, 'concluido');
+      } else {
+        const { error: directUpdateError } = await supabase
+          .from('contact_assignments')
+          .update({ status: 'concluido' })
+          .eq('contact_id', saleTargetLead.id)
+          .eq('user_id', profile.id);
+
+        if (!directUpdateError) {
+          setContacts(prev =>
+            prev.map(c => (c.id === saleTargetLead.id ? { ...c, status: 'concluido' } : c))
+          );
+          if (selectedContact && selectedContact.id === saleTargetLead.id) {
+            setSelectedContact(prev => (prev ? { ...prev, status: 'concluido' } : null));
+          }
+          updateStatusOk = true;
+        } else {
+          console.error('Erro ao atualizar status via direct update:', directUpdateError);
+        }
+      }
 
       setShowSaleModal(false);
       setSaleTargetLead(null);
-      addToast('Venda registrada com sucesso!', 'success');
+      setSaleValor('35,00');
+      setSaleNotes('');
+
+      if (!updateStatusOk) {
+        console.error('Venda registrada com sucesso em public.sales, porém o status da atribuição do lead não pôde ser atualizado.');
+        addToast('Venda registrada com sucesso! Porém houve falha ao atualizar o status do lead.', 'warning');
+      } else {
+        addToast('Venda registrada com sucesso!', 'success');
+      }
     } catch (err: any) {
       addToast(err.message || 'Erro ao registrar venda', 'error');
     } finally {
@@ -445,10 +499,10 @@ export const ResellerDashboard: React.FC = () => {
               <h2 className="text-sm font-bold uppercase tracking-wider text-slate-900 dark:text-white">
                 Meus Leads ({filteredContacts.length})
               </h2>
-              <div className="flex bg-slate-100 dark:bg-brand-dark p-1 rounded-xl text-[11px] font-bold">
+              <div className="flex bg-slate-100 dark:bg-brand-dark p-1 rounded-xl text-[11px] font-bold overflow-x-auto">
                 <button
                   onClick={() => setStatusFilter('novo')}
-                  className={`flex-1 sm:flex-initial px-3 py-1.5 rounded-lg transition ${
+                  className={`flex-1 sm:flex-initial px-2.5 sm:px-3 py-1.5 rounded-lg transition whitespace-nowrap text-center ${
                     statusFilter === 'novo' ? 'bg-brand-red text-white shadow-xs' : 'text-slate-500 hover:text-slate-800 dark:hover:text-zinc-200'
                   }`}
                 >
@@ -456,7 +510,7 @@ export const ResellerDashboard: React.FC = () => {
                 </button>
                 <button
                   onClick={() => setStatusFilter('pendente')}
-                  className={`flex-1 sm:flex-initial px-3 py-1.5 rounded-lg transition ${
+                  className={`flex-1 sm:flex-initial px-2.5 sm:px-3 py-1.5 rounded-lg transition whitespace-nowrap text-center ${
                     statusFilter === 'pendente' ? 'bg-brand-red text-white shadow-xs' : 'text-slate-500 hover:text-slate-800 dark:hover:text-zinc-200'
                   }`}
                 >
@@ -464,7 +518,7 @@ export const ResellerDashboard: React.FC = () => {
                 </button>
                 <button
                   onClick={() => setStatusFilter('concluido')}
-                  className={`flex-1 sm:flex-initial px-3 py-1.5 rounded-lg transition ${
+                  className={`flex-1 sm:flex-initial px-2.5 sm:px-3 py-1.5 rounded-lg transition whitespace-nowrap text-center ${
                     statusFilter === 'concluido' ? 'bg-brand-red text-white shadow-xs' : 'text-slate-500 hover:text-slate-800 dark:hover:text-zinc-200'
                   }`}
                 >
@@ -484,7 +538,7 @@ export const ResellerDashboard: React.FC = () => {
               />
             </div>
 
-            <div className="flex-1 overflow-y-auto space-y-2.5 pr-0.5">
+            <div className="flex-1 overflow-y-auto space-y-3 pr-0.5">
               {filteredContacts.map((c) => {
                 const isSelected = selectedContact?.id === c.id;
                 const isUpdating = statusUpdatingId === c.assignment_id;
@@ -493,21 +547,21 @@ export const ResellerDashboard: React.FC = () => {
                   <div
                     key={c.assignment_id || c.id}
                     onClick={() => setSelectedContact(c)}
-                    className={`p-3.5 rounded-xl border text-xs cursor-pointer transition ${
+                    className={`p-3.5 sm:p-4 rounded-2xl border text-xs cursor-pointer transition ${
                       isSelected
-                        ? 'border-brand-red bg-red-50/70 dark:bg-red-950/30 shadow-xs'
-                        : 'border-brand-lightBorder dark:border-brand-darkBorder hover:border-slate-300 dark:hover:border-zinc-700 bg-slate-50/50 dark:bg-brand-dark/30'
+                        ? 'border-brand-red ring-1 ring-brand-red bg-red-50/50 dark:bg-red-950/20 shadow-xs'
+                        : 'border-brand-lightBorder dark:border-brand-darkBorder hover:border-slate-300 dark:hover:border-zinc-700 bg-white dark:bg-zinc-900/40 shadow-xs'
                     }`}
                   >
-                    <div className="flex items-start justify-between gap-2 mb-1.5">
+                    {/* 1. Topo: Nome + Badge */}
+                    <div className="flex items-center justify-between gap-2 mb-1">
                       <div className="flex items-center gap-2 min-w-0">
-                        <div className="w-8 h-8 rounded-xl bg-slate-100 dark:bg-zinc-800 text-brand-red font-bold flex items-center justify-center shrink-0">
+                        <div className="w-8 h-8 rounded-xl bg-slate-100 dark:bg-zinc-800 text-brand-red font-black flex items-center justify-center shrink-0 text-xs">
                           {c.nome ? c.nome.charAt(0).toUpperCase() : <User className="w-4 h-4" />}
                         </div>
-                        <div className="min-w-0">
-                          <p className="font-bold text-slate-900 dark:text-white truncate text-xs">{c.nome}</p>
-                          <p className="text-[11px] text-slate-500 dark:text-zinc-400 font-mono">{c.telefone}</p>
-                        </div>
+                        <p className="font-bold text-slate-900 dark:text-white truncate text-sm">
+                          {c.nome || 'Lead sem nome'}
+                        </p>
                       </div>
 
                       {/* Badge de status */}
@@ -524,75 +578,102 @@ export const ResellerDashboard: React.FC = () => {
                       </span>
                     </div>
 
+                    {/* 2. Telefone */}
+                    <div className="mb-2.5 pl-10">
+                      <a
+                        href={`tel:${c.telefone.replace(/\D/g, '')}`}
+                        onClick={(e) => e.stopPropagation()}
+                        className="inline-flex items-center gap-1.5 text-xs text-slate-600 dark:text-zinc-400 hover:text-brand-red dark:hover:text-brand-red font-mono font-medium transition"
+                        title="Ligar para o contato"
+                      >
+                        <Phone className="w-3.5 h-3.5 text-slate-400" />
+                        <span>{c.telefone}</span>
+                      </a>
+                    </div>
+
+                    {/* Observações se existirem */}
                     {c.observacoes && (
-                      <p className="text-[11px] text-slate-500 dark:text-zinc-400 line-clamp-1 mb-2 bg-white dark:bg-zinc-900/60 p-1.5 rounded-lg border border-brand-lightBorder dark:border-brand-darkBorder">
+                      <p className="text-[11px] text-slate-500 dark:text-zinc-400 line-clamp-1 mb-2.5 bg-slate-50 dark:bg-zinc-800/60 px-2.5 py-1 rounded-lg border border-brand-lightBorder dark:border-brand-darkBorder">
                         {c.observacoes}
                       </p>
                     )}
 
-                    {/* Botões de Ação do Lead */}
+                    {/* 3. Botão Grande de WhatsApp (Destaque Máximo, largura total, toque mínimo 44px) */}
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleOpenWhatsApp(c);
+                      }}
+                      className="w-full min-h-[44px] py-2.5 px-4 rounded-xl bg-emerald-600 hover:bg-emerald-500 active:bg-emerald-700 text-white font-bold text-xs flex items-center justify-center gap-2 shadow-xs transition-all active:scale-[0.99] mb-2.5"
+                    >
+                      <MessageCircle className="w-4 h-4 shrink-0" />
+                      <span className="truncate">
+                        {c.status === 'novo'
+                          ? '💬 Chamar no WhatsApp'
+                          : c.status === 'pendente'
+                          ? '💬 Continuar conversa'
+                          : '💬 Falar no WhatsApp'}
+                      </span>
+                    </button>
+
+                    {/* 4. Ações Secundárias: Status Dropdown + Registrar Venda + Usar na IA */}
                     <div
                       className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-brand-lightBorder dark:border-brand-darkBorder"
                       onClick={(e) => e.stopPropagation()}
                     >
-                      <div className="flex items-center gap-1.5">
-                        <span className="text-[10px] text-slate-400 font-medium">Mudar:</span>
+                      {/* Seletor rápido de Status */}
+                      <div className="flex items-center gap-1.5 shrink-0">
+                        <span className="text-[11px] font-semibold text-slate-500 dark:text-zinc-400">Status:</span>
                         {isUpdating ? (
                           <RefreshCw className="w-3.5 h-3.5 animate-spin text-slate-400" />
                         ) : (
-                          <>
-                            {c.status !== 'novo' && (
-                              <button
-                                onClick={() => updateLeadStatus(c.assignment_id, 'novo')}
-                                className="px-2 py-1 rounded-lg bg-blue-50 dark:bg-blue-950/40 text-blue-600 dark:text-blue-400 text-[10px] font-bold hover:bg-blue-100 transition min-h-[28px]"
-                              >
-                                Novo
-                              </button>
-                            )}
-                            {c.status !== 'pendente' && (
-                              <button
-                                onClick={() => updateLeadStatus(c.assignment_id, 'pendente')}
-                                className="px-2 py-1 rounded-lg bg-amber-50 dark:bg-amber-950/40 text-amber-600 dark:text-amber-400 text-[10px] font-bold hover:bg-amber-100 transition min-h-[28px]"
-                              >
-                                Pendente
-                              </button>
-                            )}
-                            {c.status !== 'concluido' && (
-                              <button
-                                onClick={() => handleOpenSaleModal(c)}
-                                className="px-2 py-1 rounded-lg bg-emerald-50 dark:bg-emerald-950/40 text-emerald-600 dark:text-emerald-400 text-[10px] font-bold hover:bg-emerald-100 transition flex items-center gap-1 min-h-[28px]"
-                              >
-                                <DollarSign className="w-3 h-3" /> Vendido
-                              </button>
-                            )}
-                          </>
+                          <div className="relative inline-block">
+                            <select
+                              value={c.status}
+                              onChange={(e) => {
+                                const val = e.target.value as 'novo' | 'pendente' | 'concluido';
+                                if (val === 'concluido') {
+                                  handleOpenSaleModal(c);
+                                } else {
+                                  updateLeadStatus(c.assignment_id, val);
+                                }
+                              }}
+                              className="appearance-none pl-2 pr-6 py-1 text-[11px] font-bold rounded-lg border border-brand-lightBorder dark:border-brand-darkBorder bg-slate-50 dark:bg-zinc-800 text-slate-800 dark:text-zinc-200 cursor-pointer focus:ring-1 focus:ring-brand-red outline-none min-h-[30px]"
+                            >
+                              <option value="novo">Novo</option>
+                              <option value="pendente">Pendente</option>
+                              <option value="concluido">Vendido</option>
+                            </select>
+                            <ChevronDown className="w-3 h-3 text-slate-400 absolute right-1.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+                          </div>
                         )}
                       </div>
 
+                      {/* Botões Registrar Venda e Usar na IA */}
                       <div className="flex items-center gap-1.5">
-                        <a
-                          href={`https://wa.me/${c.telefone.replace(/\D/g, '')}`}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          onClick={() => {
-                            if (c.status === 'novo' && c.assignment_id) {
-                              updateLeadStatus(c.assignment_id, 'pendente');
-                            }
-                          }}
-                          className="p-1.5 rounded-lg bg-emerald-500/10 text-emerald-600 hover:bg-emerald-500/20 transition flex items-center gap-1 text-[10px] font-bold min-h-[28px]"
-                          title="Abrir WhatsApp direto"
-                        >
-                          <Phone className="w-3 h-3" /> Zap
-                        </a>
                         <button
-                          onClick={() => setSelectedContact(c)}
-                          className={`px-2 py-1 rounded-lg text-[10px] font-bold transition min-h-[28px] ${
-                            isSelected
-                              ? 'bg-brand-red text-white'
-                              : 'bg-slate-200 dark:bg-zinc-800 text-slate-700 dark:text-zinc-300'
-                          }`}
+                          type="button"
+                          onClick={() => handleOpenSaleModal(c)}
+                          className="px-2.5 py-1 rounded-lg bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20 text-[11px] font-bold transition flex items-center gap-1 min-h-[30px]"
+                          title="Registrar venda para este lead"
                         >
-                          {isSelected ? 'Selecionado' : 'Usar na IA'}
+                          <DollarSign className="w-3.5 h-3.5 shrink-0" />
+                          <span>Registrar venda</span>
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={() => setSelectedContact(c)}
+                          className={`px-2 py-1 rounded-lg border text-[11px] font-bold transition flex items-center gap-1 min-h-[30px] ${
+                            isSelected
+                              ? 'bg-brand-red text-white border-brand-red'
+                              : 'bg-slate-100 dark:bg-zinc-800 hover:bg-slate-200 dark:hover:bg-zinc-700 text-slate-700 dark:text-zinc-300 border-brand-lightBorder dark:border-brand-darkBorder'
+                          }`}
+                          title="Carregar contato no gerador de IA"
+                        >
+                          <Sparkles className="w-3 h-3 shrink-0" />
+                          <span>{isSelected ? 'Na IA' : 'Usar na IA'}</span>
                         </button>
                       </div>
                     </div>
@@ -720,7 +801,7 @@ export const ResellerDashboard: React.FC = () => {
               </button>
 
               <button
-                onClick={handleOpenWhatsApp}
+                onClick={() => handleOpenWhatsApp()}
                 disabled={!generatedMessage || !selectedContact}
                 className="flex items-center justify-center gap-2 py-3 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold disabled:opacity-40 transition shadow-sm min-h-[44px]"
               >
